@@ -1,0 +1,37 @@
+{
+  "name": "studyswap-ai-backend",
+  "version": "1.0.0",
+  "description": "StudySwap AI Railway Backend API for Storage, Razorpay Payments and Orders",
+  "main": "dist/server.js",
+  "scripts": {
+    "dev": "ts-node-dev --respawn --transpile-only src/server.ts",
+    "build": "tsc",
+    "start": "node dist/server.js",
+    "test": "vitest run"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "dependencies": {
+    "@aws-sdk/client-s3": "^3.679.0",
+    "@aws-sdk/s3-request-presigner": "^3.679.0",
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.5",
+    "express": "^4.21.1",
+    "express-rate-limit": "^7.4.1",
+    "firebase-admin": "^12.7.0",
+    "helmet": "^8.0.0",
+    "razorpay": "^2.9.5",
+    "zod": "^3.23.8"
+  },
+  "devDependencies": {
+    "@types/cors": "^2.8.17",
+    "@types/express": "^5.0.0",
+    "@types/node": "^22.8.1",
+    "@types/supertest": "^6.0.2",
+    "supertest": "^7.0.0",
+    "ts-node-dev": "^2.0.0",
+    "typescript": "^5.6.3",
+    "vitest": "^2.1.3"
+  }
+}

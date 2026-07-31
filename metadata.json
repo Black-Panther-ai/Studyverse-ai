@@ -1,0 +1,6 @@
+{
+  "name": "StudySwap AI",
+  "description": "Student Marketplace & AI Study Platform. Buy/sell second-hand products, share & purchase handwritten notes, and study with Gemini AI.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

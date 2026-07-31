@@ -1,0 +1,71 @@
+rules_version = '2';
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Helper functions
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+
+    function isOwner(userId) {
+      return isAuthenticated() && request.auth.uid == userId;
+    }
+
+    // 1. Users collection
+    match /users/{userId} {
+      allow read: if isAuthenticated();
+      allow create: if isOwner(userId)
+                    && request.resource.data.uid == userId
+                    && (!('canSell' in request.resource.data) || request.resource.data.canSell == false);
+
+      allow update: if isOwner(userId)
+                    && (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['accountStatus', 'uid', 'email', 'canSell']));
+
+      allow delete: if false;
+    }
+
+    // 2. Marketplace Listings collection
+    match /listings/{listingId} {
+      allow read: if resource.data.status == 'active' || (isAuthenticated() && request.auth.uid == resource.data.sellerId);
+
+      allow create: if isAuthenticated()
+                    && request.resource.data.sellerId == request.auth.uid
+                    && request.resource.data.isApproved == true;
+
+      allow update: if isAuthenticated()
+                    && resource.data.sellerId == request.auth.uid
+                    && (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['isApproved', 'sellerId']));
+
+      allow delete: if isAuthenticated() && resource.data.sellerId == request.auth.uid;
+    }
+
+    // 3. Server-Controlled Orders collection
+    match /orders/{orderId} {
+      allow read: if isAuthenticated() && (
+        resource.data.buyerId == request.auth.uid || resource.data.sellerId == request.auth.uid
+      );
+      // Android clients are blocked from creating, marking paid, or modifying order financial state
+      allow write: if false;
+    }
+
+    // 4. Server-Controlled Digital E-Book Entitlements collection
+    match /ebook_entitlements/{entitlementId} {
+      allow read: if isAuthenticated() && (
+        resource.data.buyerId == request.auth.uid || resource.data.sellerId == request.auth.uid
+      );
+      // Android clients cannot issue download entitlements directly
+      allow write: if false;
+    }
+
+    // 5. Server-Controlled Webhook Idempotency records
+    match /processed_webhooks/{eventId} {
+      allow read, write: if false;
+    }
+
+    // Default deny for unknown collections
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}

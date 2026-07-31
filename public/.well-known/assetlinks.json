@@ -1,0 +1,12 @@
+[
+  {
+    "relation": ["delegate_permission/common.handle_all_urls"],
+    "target": {
+      "namespace": "android_app",
+      "package_name": "com.aistudio.studyswap.ai",
+      "sha256_cert_fingerprints": [
+        "10:5B:3F:8F:A7:20:98:83:8B:2E:7C:F7:56:55:01:A0:67:38:FE:84:BA:8F:80:6B:EB:FB:EB:1F:B4:7B:44:81"
+      ]
+    }
+  }
+]
