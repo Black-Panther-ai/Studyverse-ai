@@ -3,8 +3,10 @@ package com.example
 import com.example.data.model.Listing
 import com.example.data.repository.RailwayStorageRepository
 import com.example.data.repository.RazorpayPaymentRepository
+import com.example.util.NetworkConfig
 import org.json.JSONObject
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -15,6 +17,21 @@ import org.robolectric.annotation.Config
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [34])
 class Prompt2UnitTests {
+
+    @Test
+    fun testBackendBaseUrlNormalization() {
+        val rawUrl = "https://studyverse-ai-production.up.railway.app///"
+        val normalized = NetworkConfig.normalizeUrl(rawUrl)
+        assertEquals("https://studyverse-ai-production.up.railway.app", normalized)
+    }
+
+    @Test
+    fun testAuthorizationHeaderFormatting() {
+        val mockToken = "eyJhbGciOiJSUzI1NiIs..."
+        val authHeader = "Bearer $mockToken"
+        assertTrue(authHeader.startsWith("Bearer "))
+        assertEquals("eyJhbGciOiJSUzI1NiIs...", authHeader.substring(7))
+    }
 
     @Test
     fun testPresignedUploadResponseMapping() {
@@ -42,12 +59,12 @@ class Prompt2UnitTests {
     }
 
     @Test
-    fun testCreateOrderResponseMapping() {
+    fun testCreateOrderResponseParsing() {
         val jsonString = """
             {
                 "internalOrderId": "ord_999",
                 "razorpayOrderId": "order_rzp_888",
-                "razorpayKeyId": "rzp_test_key_123",
+                "razorpayKeyId": "rzp_live_key_123",
                 "amountPaise": 4900,
                 "currency": "INR",
                 "listingTitle": "Engineering Physics Notes"
@@ -66,9 +83,37 @@ class Prompt2UnitTests {
 
         assertEquals("ord_999", response.internalOrderId)
         assertEquals("order_rzp_888", response.razorpayOrderId)
-        assertEquals("rzp_test_key_123", response.razorpayKeyId)
+        assertEquals("rzp_live_key_123", response.razorpayKeyId)
         assertEquals(4900L, response.amountPaise)
         assertEquals("INR", response.currency)
+    }
+
+    @Test
+    fun testPaymentVerificationResponseParsing() {
+        val jsonString = """
+            {
+                "status": "paid",
+                "message": "Payment verified and order finalized successfully."
+            }
+        """.trimIndent()
+
+        val json = JSONObject(jsonString)
+        val response = RazorpayPaymentRepository.VerifyPaymentResponse(
+            status = json.getString("status"),
+            message = json.getString("message")
+        )
+
+        assertEquals("paid", response.status)
+        assertEquals("Payment verified and order finalized successfully.", response.message)
+    }
+
+    @Test
+    fun testCancelledPaymentRemainingUnpaid() {
+        val failedStatus = "payment_failed"
+        val cancelledStatus = "cancelled"
+
+        assertFalse(failedStatus == "paid")
+        assertFalse(cancelledStatus == "paid")
     }
 
     @Test

@@ -22,6 +22,7 @@ android {
     versionName = "1.0"
 
     testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+    buildConfigField("String", "BACKEND_BASE_URL", "\"https://studyverse-ai-production.up.railway.app\"")
   }
 
   buildTypes {

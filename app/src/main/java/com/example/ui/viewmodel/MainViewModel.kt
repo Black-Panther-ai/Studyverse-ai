@@ -543,12 +543,101 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         uiMessage.value = "Downloading ${note.title}..."
     }
 
+    private var isCheckoutInProgress = false
+
+    fun initiateRazorpayCheckout(activity: android.app.Activity, listingId: String) {
+        val uid = _currentUserId.value
+        if (uid == null) {
+            uiMessage.value = "Please sign in to make a purchase."
+            return
+        }
+
+        if (isCheckoutInProgress) return
+        isCheckoutInProgress = true
+
+        viewModelScope.launch {
+            try {
+                uiMessage.value = "Initializing order with backend..."
+                val response = razorpayPaymentRepository.createOrder(listingId)
+                pendingInternalOrderId = response.internalOrderId
+                pendingRazorpayOrderId = response.razorpayOrderId
+
+                val checkout = com.razorpay.Checkout()
+                checkout.setKeyID(response.razorpayKeyId)
+
+                val userEmail = FirebaseAuth.getInstance().currentUser?.email ?: ""
+
+                val options = org.json.JSONObject().apply {
+                    put("name", "StudySwap AI")
+                    put("description", response.listingTitle)
+                    put("order_id", response.razorpayOrderId)
+                    put("amount", response.amountPaise)
+                    put("currency", response.currency)
+                    put("prefill", org.json.JSONObject().apply {
+                        put("email", userEmail)
+                    })
+                }
+
+                checkout.open(activity, options)
+            } catch (e: Exception) {
+                uiMessage.value = e.message ?: "Failed to initiate payment."
+            } finally {
+                isCheckoutInProgress = false
+            }
+        }
+    }
+
+    fun onRazorpayPaymentSuccess(razorpayPaymentId: String, razorpaySignature: String = "") {
+        val internalOrderId = pendingInternalOrderId
+        val razorpayOrderId = pendingRazorpayOrderId
+
+        if (internalOrderId.isNullOrBlank() || razorpayOrderId.isNullOrBlank()) {
+            uiMessage.value = "Payment failed: Order session mismatch."
+            return
+        }
+
+        viewModelScope.launch {
+            try {
+                uiMessage.value = "Verifying payment with server..."
+                val result = razorpayPaymentRepository.verifyPayment(
+                    internalOrderId = internalOrderId,
+                    razorpayOrderId = razorpayOrderId,
+                    razorpayPaymentId = razorpayPaymentId,
+                    razorpaySignature = razorpaySignature
+                )
+                if (result.status == "paid") {
+                    uiMessage.value = "Payment Successful! Order verified."
+                } else {
+                    uiMessage.value = "Payment Status: ${result.message}"
+                }
+            } catch (e: Exception) {
+                uiMessage.value = e.message ?: "Payment verification failed."
+            } finally {
+                pendingInternalOrderId = null
+                pendingRazorpayOrderId = null
+            }
+        }
+    }
+
+    fun onRazorpayPaymentError(code: Int, response: String?) {
+        pendingInternalOrderId = null
+        pendingRazorpayOrderId = null
+        uiMessage.value = "Payment Cancelled or Failed: ${response ?: "Error code $code"}"
+    }
+
     fun purchaseDigitalNote(note: NoteEntity) {
         uiMessage.value = "Order placement initialized for ${note.title}"
     }
 
     fun purchaseDigitalNoteWithInstamojo(context: Context? = null, note: NoteEntity? = null, simulateSuccess: Boolean = false) {
-        uiMessage.value = "Payments are not configured yet."
+        val activity = context as? android.app.Activity
+        if (activity != null && note != null) {
+            initiateRazorpayCheckout(activity, note.id)
+        } else if (note != null) {
+            uiMessage.value = "Order placement initialized for ${note.title}"
+        } else {
+            uiMessage.value = "Please log in to purchase digital notes."
+        }
     }
 
     fun markProductAsSold(product: ProductEntity) {

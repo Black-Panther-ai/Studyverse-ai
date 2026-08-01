@@ -32,13 +32,14 @@ import com.example.ui.viewmodel.AppTab
 import com.example.ui.viewmodel.MainViewModel
 import kotlinx.coroutines.launch
 
-class MainActivity : ComponentActivity() {
+class MainActivity : ComponentActivity(), com.razorpay.PaymentResultWithDataListener {
 
     private val viewModel: MainViewModel by viewModels()
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         enableEdgeToEdge()
+        com.razorpay.Checkout.preload(applicationContext)
         com.example.data.firebase.FirebaseManager.initialize(applicationContext)
 
         intent?.data?.let { uri ->
@@ -56,6 +57,16 @@ class MainActivity : ComponentActivity() {
                 )
             }
         }
+    }
+
+    override fun onPaymentSuccess(razorpayPaymentId: String?, data: com.razorpay.PaymentData?) {
+        val paymentId = razorpayPaymentId ?: data?.paymentId ?: ""
+        val signature = data?.signature ?: ""
+        viewModel.onRazorpayPaymentSuccess(paymentId, signature)
+    }
+
+    override fun onPaymentError(code: Int, response: String?, data: com.razorpay.PaymentData?) {
+        viewModel.onRazorpayPaymentError(code, response)
     }
 
     override fun onNewIntent(intent: android.content.Intent) {

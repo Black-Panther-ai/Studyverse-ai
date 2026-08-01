@@ -1,5 +1,6 @@
 package com.example.data.repository
 
+import com.example.util.NetworkConfig
 import com.google.firebase.auth.FirebaseAuth
 import kotlinx.coroutines.tasks.await
 import okhttp3.MediaType.Companion.toMediaTypeOrNull
@@ -12,7 +13,7 @@ import java.io.InputStream
 import java.util.concurrent.TimeUnit
 
 class RailwayStorageRepository(
-    private val baseUrl: String = "http://10.0.2.2:8080", // Default emulator localhost URL
+    private val baseUrl: String = NetworkConfig.baseUrl,
     private val client: OkHttpClient = OkHttpClient.Builder()
         .connectTimeout(30, TimeUnit.SECONDS)
         .readTimeout(30, TimeUnit.SECONDS)
@@ -20,11 +21,46 @@ class RailwayStorageRepository(
         .build()
 ) {
 
-    private suspend fun getFirebaseIdToken(): String {
+    private suspend fun getFirebaseIdToken(forceRefresh: Boolean = false): String {
         val currentUser = FirebaseAuth.getInstance().currentUser
             ?: throw IllegalStateException("User is not authenticated with Firebase.")
-        val tokenResult = currentUser.getIdToken(true).await()
+        val tokenResult = currentUser.getIdToken(forceRefresh).await()
         return tokenResult.token ?: throw IllegalStateException("Failed to obtain Firebase ID token.")
+    }
+
+    private suspend fun executeProtectedRequest(
+        url: String,
+        jsonBody: JSONObject
+    ): String {
+        var idToken = getFirebaseIdToken(forceRefresh = false)
+
+        val makeRequest = { token: String ->
+            val requestBody = jsonBody.toString().toRequestBody("application/json".toMediaTypeOrNull())
+            Request.Builder()
+                .url(url)
+                .addHeader("Authorization", "Bearer $token")
+                .post(requestBody)
+                .build()
+        }
+
+        var response = client.newCall(makeRequest(idToken)).execute()
+
+        // Requirement 7: Refreshes token and retries once after HTTP 401
+        if (response.code == 401) {
+            response.close()
+            idToken = getFirebaseIdToken(forceRefresh = true)
+            response = client.newCall(makeRequest(idToken)).execute()
+        }
+
+        val responseText = response.body?.string() ?: ""
+
+        if (!response.isSuccessful) {
+            val errorJson = try { JSONObject(responseText) } catch (e: Exception) { null }
+            val errorMsg = errorJson?.optString("message") ?: "HTTP ${response.code}: API request failed"
+            throw IllegalStateException(errorMsg)
+        }
+
+        return responseText
     }
 
     data class PresignedUploadResponse(
@@ -40,8 +76,6 @@ class RailwayStorageRepository(
         contentType: String,
         fileSizeBytes: Long
     ): PresignedUploadResponse {
-        val idToken = getFirebaseIdToken()
-
         val jsonBody = JSONObject().apply {
             put("listingId", listingId)
             put("fileCategory", fileCategory)
@@ -49,21 +83,8 @@ class RailwayStorageRepository(
             put("fileSizeBytes", fileSizeBytes)
         }
 
-        val requestBody = jsonBody.toString().toRequestBody("application/json".toMediaTypeOrNull())
-        val request = Request.Builder()
-            .url("$baseUrl/api/v1/storage/presign-upload")
-            .addHeader("Authorization", "Bearer $idToken")
-            .post(requestBody)
-            .build()
-
-        val response = client.newCall(request).execute()
-        val responseText = response.body?.string() ?: ""
-
-        if (!response.isSuccessful) {
-            val errorJson = try { JSONObject(responseText) } catch (e: Exception) { null }
-            val errorMsg = errorJson?.optString("message") ?: "HTTP ${response.code}: Upload presign failed"
-            throw IllegalStateException(errorMsg)
-        }
+        val endpointUrl = "${NetworkConfig.normalizeUrl(baseUrl)}/api/v1/storage/presign-upload"
+        val responseText = executeProtectedRequest(endpointUrl, jsonBody)
 
         val json = JSONObject(responseText)
         val headersJson = json.optJSONObject("requiredHeaders")
@@ -104,8 +125,9 @@ class RailwayStorageRepository(
         val jsonBody = JSONObject().apply { put("objectKeys", jsonArray) }
 
         val requestBody = jsonBody.toString().toRequestBody("application/json".toMediaTypeOrNull())
+        val endpointUrl = "${NetworkConfig.normalizeUrl(baseUrl)}/api/v1/storage/image-urls"
         val request = Request.Builder()
-            .url("$baseUrl/api/v1/storage/image-urls")
+            .url(endpointUrl)
             .post(requestBody)
             .build()
 
@@ -125,28 +147,13 @@ class RailwayStorageRepository(
     }
 
     suspend fun requestPrivateDownloadUrl(listingId: String, orderId: String): String {
-        val idToken = getFirebaseIdToken()
-
         val jsonBody = JSONObject().apply {
             put("listingId", listingId)
             put("orderId", orderId)
         }
 
-        val requestBody = jsonBody.toString().toRequestBody("application/json".toMediaTypeOrNull())
-        val request = Request.Builder()
-            .url("$baseUrl/api/v1/storage/private-download-url")
-            .addHeader("Authorization", "Bearer $idToken")
-            .post(requestBody)
-            .build()
-
-        val response = client.newCall(request).execute()
-        val responseText = response.body?.string() ?: ""
-
-        if (!response.isSuccessful) {
-            val errorJson = try { JSONObject(responseText) } catch (e: Exception) { null }
-            val errorMsg = errorJson?.optString("message") ?: "Failed to generate private download link."
-            throw IllegalStateException(errorMsg)
-        }
+        val endpointUrl = "${NetworkConfig.normalizeUrl(baseUrl)}/api/v1/storage/private-download-url"
+        val responseText = executeProtectedRequest(endpointUrl, jsonBody)
 
         val json = JSONObject(responseText)
         return json.getString("downloadUrl")

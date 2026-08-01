@@ -205,7 +205,7 @@ fun NoteDetailScreen(
                     )
                     Spacer(modifier = Modifier.width(8.dp))
                     Text(
-                        text = if (note.isFree) "Download Free Notes (PDF)" else "Pay ₹${note.price.toInt()} via Instamojo Gateway",
+                        text = if (note.isFree) "Download Free Notes (PDF)" else "Pay ₹${note.price.toInt()} via Razorpay",
                         fontSize = 15.sp,
                         fontWeight = FontWeight.Bold
                     )
