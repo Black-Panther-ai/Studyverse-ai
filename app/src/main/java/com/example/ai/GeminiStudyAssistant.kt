@@ -12,7 +12,7 @@ import org.json.JSONObject
 import java.util.concurrent.TimeUnit
 
 object GeminiStudyAssistant {
-    private const val MODEL_NAME = "gemini-3.5-flash"
+    private const val MODEL_NAME = "gemini-1.5-flash"
     private const val BASE_URL = "https://generativelanguage.googleapis.com/v1beta/models/$MODEL_NAME:generateContent"
 
     private val client = OkHttpClient.Builder()
@@ -24,6 +24,7 @@ object GeminiStudyAssistant {
     suspend fun generateAiContent(prompt: String, systemInstruction: String? = null): String = withContext(Dispatchers.IO) {
         val apiKey = BuildConfig.GEMINI_API_KEY
         if (apiKey.isEmpty() || apiKey == "MY_GEMINI_API_KEY") {
+            android.util.Log.w("GeminiStudyAssistant", "GEMINI_API_KEY is unset or placeholder. Using intelligent local fallback.")
             return@withContext getLocalFallbackResponse(prompt)
         }
 
@@ -52,6 +53,7 @@ object GeminiStudyAssistant {
             val requestBody = requestJson.toString().toRequestBody("application/json".toMediaType())
             val request = Request.Builder()
                 .url("$BASE_URL?key=$apiKey")
+                .addHeader("x-goog-api-key", apiKey)
                 .post(requestBody)
                 .build()
 
@@ -66,13 +68,18 @@ object GeminiStudyAssistant {
                     val content = firstCandidate.optJSONObject("content")
                     val parts = content?.optJSONArray("parts")
                     if (parts != null && parts.length() > 0) {
-                        return@withContext parts.getJSONObject(0).optString("text", "No text generated.")
+                        val textResult = parts.getJSONObject(0).optString("text", "")
+                        if (textResult.isNotBlank()) {
+                            return@withContext textResult
+                        }
                     }
                 }
+            } else {
+                android.util.Log.e("GeminiStudyAssistant", "Gemini API HTTP Error ${response.code}: $responseString")
             }
             return@withContext getLocalFallbackResponse(prompt)
         } catch (e: Exception) {
-            e.printStackTrace()
+            android.util.Log.e("GeminiStudyAssistant", "Gemini API Exception: ${e.message}", e)
             return@withContext getLocalFallbackResponse(prompt)
         }
     }

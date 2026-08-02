@@ -14,6 +14,17 @@ const app = express();
 app.use(helmet());
 app.use(cors());
 
+// Global HTTP Request Logger
+app.use((req, res, next) => {
+  const start = Date.now();
+  console.log(`[HTTP INCOMING] ${req.method} ${req.originalUrl} - IP: ${req.ip} - User-Agent: ${req.headers['user-agent'] || 'unknown'}`);
+  res.on('finish', () => {
+    const duration = Date.now() - start;
+    console.log(`[HTTP RESPONSE] ${req.method} ${req.originalUrl} - Status: ${res.statusCode} (${duration}ms)`);
+  });
+  next();
+});
+
 // Rate Limiter
 const limiter = rateLimit({
   windowMs: 15 * 60 * 1000,

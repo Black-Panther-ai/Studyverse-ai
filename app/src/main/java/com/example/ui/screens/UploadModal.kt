@@ -45,6 +45,13 @@ fun UploadModalDialog(
     val uploadProgress by viewModel.uploadProgress.collectAsState()
     val uploadStatusText by viewModel.uploadStatusText.collectAsState()
 
+    LaunchedEffect(uploadStatusText) {
+        if (uploadStatusText?.contains("successfully!", ignoreCase = true) == true) {
+            kotlinx.coroutines.delay(1000)
+            onDismiss()
+        }
+    }
+
     // Form fields for Notes
     var noteType by remember { mutableStateOf("Free") } // "Free" or "Premium"
     var titleInput by remember { mutableStateOf("") }
@@ -578,13 +585,23 @@ fun UploadModalDialog(
                 Button(
                     onClick = {
                         if (uploadType == "Notes") {
+                            if (selectedPdfUri == null) {
+                                viewModel.uiMessage.value = "Please select a valid PDF file to upload."
+                                return@Button
+                            }
+                            if (!copyrightDeclared) {
+                                viewModel.uiMessage.value = "Mandatory: You must check the Original Content Declaration box."
+                                return@Button
+                            }
+
                             val price = priceInput.toDoubleOrNull() ?: 0.0
                             val isFreeNote = noteType == "Free"
-                            val finalPdfUri = selectedPdfUri?.toString() ?: "https://www.w3.org/WAI/ER/tests/xhtml/testfiles/resources/pdf/dummy.pdf"
+                            val finalPdfUri = selectedPdfUri!!.toString()
                             val finalPdfName = if (selectedPdfName.isNotBlank()) selectedPdfName else "HandwrittenNotes.pdf"
                             val previewStrings = selectedPreviewUris.map { it.toString() }
 
                             viewModel.createHandwrittenNotes(
+                                context = context,
                                 title = titleInput.ifEmpty { "Handwritten Lecture Notes" },
                                 description = descriptionInput.ifEmpty { "Complete high-yield handwritten exam notes." },
                                 subject = subjectInput,
@@ -617,7 +634,6 @@ fun UploadModalDialog(
                                 photoUrlsList = photoStrings
                             )
                         }
-                        onDismiss()
                     },
                     colors = ButtonDefaults.buttonColors(containerColor = PrimaryBlue),
                     modifier = Modifier.testTag("submit_upload_button")

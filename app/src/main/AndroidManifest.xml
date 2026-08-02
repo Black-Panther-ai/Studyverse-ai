@@ -58,6 +58,9 @@
                 <data
                     android:scheme="studyswap"
                     android:host="verify" />
+                <data
+                    android:scheme="studyswap"
+                    android:host="reset-password" />
             </intent-filter>
         </activity>
     </application>

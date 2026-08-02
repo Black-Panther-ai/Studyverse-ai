@@ -9,7 +9,7 @@ import androidx.compose.material.icons.filled.Download
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.VerifiedUser
 import androidx.compose.material3.*
-import androidx.compose.runtime.Composable
+import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.rotate
@@ -133,6 +133,19 @@ fun WatermarkDialog(
         },
         confirmButton = {
             val context = androidx.compose.ui.platform.LocalContext.current
+            var pdfFileToView by remember { mutableStateOf<java.io.File?>(null) }
+
+            pdfFileToView?.let { file ->
+                InAppPdfViewerDialog(
+                    pdfFile = file,
+                    title = noteTitle,
+                    onDismiss = {
+                        pdfFileToView = null
+                        onDismiss()
+                    }
+                )
+            }
+
             Button(
                 onClick = {
                     val pdfFile = com.example.util.PdfDownloadHelper.generateAndSavePdf(
@@ -143,19 +156,19 @@ fun WatermarkDialog(
                         authorName = "Verified Note Author"
                     )
                     if (pdfFile != null && pdfFile.exists()) {
-                        com.example.util.PdfDownloadHelper.openPdfFile(context, pdfFile)
                         onDownload()
+                        pdfFileToView = pdfFile
                     } else {
                         android.widget.Toast.makeText(context, "Failed to generate PDF file.", android.widget.Toast.LENGTH_SHORT).show()
+                        onDismiss()
                     }
-                    onDismiss()
                 },
                 colors = ButtonDefaults.buttonColors(containerColor = PrimaryBlue),
                 modifier = Modifier.testTag("download_watermarked_pdf_button")
             ) {
                 Icon(Icons.Default.Download, contentDescription = null, modifier = Modifier.size(18.dp))
                 Spacer(modifier = Modifier.width(6.dp))
-                Text("Save & Open PDF")
+                Text("Read In-App PDF")
             }
         },
         dismissButton = {

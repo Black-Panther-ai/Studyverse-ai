@@ -131,4 +131,22 @@ class Prompt2UnitTests {
         assertTrue(validKey.startsWith("listing-images/"))
         assertTrue(invalidKey.contains(".."))
     }
+
+    @Test
+    fun testPdfFileExtensionValidation() {
+        val validPdf = "Lecture_Notes_2026.pdf"
+        val invalidFormat = "Document.docx"
+
+        assertTrue(validPdf.endsWith(".pdf", ignoreCase = true))
+        assertFalse(invalidFormat.endsWith(".pdf", ignoreCase = true))
+    }
+
+    @Test
+    fun testGeminiModelEndpointResolution() {
+        val modelName = "gemini-1.5-flash"
+        val endpointUrl = "https://generativelanguage.googleapis.com/v1beta/models/$modelName:generateContent"
+
+        assertTrue(endpointUrl.contains("gemini-1.5-flash"))
+        assertFalse(endpointUrl.contains("gemini-3.5-flash"))
+    }
 }

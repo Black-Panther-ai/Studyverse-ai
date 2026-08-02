@@ -468,10 +468,19 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         uiMessage.value = "Signed out successfully."
     }
 
-    fun sendPasswordReset(email: String) {
+    fun sendPasswordReset(email: String, onResult: (Boolean) -> Unit = {}) {
         val trimmedEmail = email.trim()
+        Log.d("PasswordReset", "Attempting password reset dispatch for email: '$trimmedEmail'")
+
         if (trimmedEmail.isBlank()) {
             uiMessage.value = "Please enter your registered email address."
+            onResult(false)
+            return
+        }
+
+        if (!android.util.Patterns.EMAIL_ADDRESS.matcher(trimmedEmail).matches()) {
+            uiMessage.value = "Invalid email format. Please enter a valid email address."
+            onResult(false)
             return
         }
 
@@ -479,13 +488,37 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             val auth = FirebaseManager.auth
             if (auth != null) {
                 try {
-                    auth.sendPasswordResetEmail(trimmedEmail).await()
+                    val actionCodeSettings = FirebaseManager.getActionCodeSettings()
+                    Log.d("PasswordReset", "Sending reset email with ActionCodeSettings for $trimmedEmail")
+                    auth.sendPasswordResetEmail(trimmedEmail, actionCodeSettings).await()
+                    Log.d("PasswordReset", "Password reset email successfully sent to $trimmedEmail")
                     uiMessage.value = "Password reset email sent to $trimmedEmail. Check your inbox."
+                    onResult(true)
+                } catch (e: FirebaseAuthInvalidUserException) {
+                    Log.e("PasswordReset", "User not found exception for $trimmedEmail: ${e.message}")
+                    uiMessage.value = "No account found with $trimmedEmail. Please check your email or register."
+                    onResult(false)
+                } catch (e: FirebaseNetworkException) {
+                    Log.e("PasswordReset", "Network exception for $trimmedEmail: ${e.message}")
+                    uiMessage.value = "Network error. Please check your internet connection and try again."
+                    onResult(false)
                 } catch (e: Exception) {
-                    uiMessage.value = "Failed to send reset email: ${e.localizedMessage ?: e.message}"
+                    Log.w("PasswordReset", "ActionCodeSettings reset failed (${e.javaClass.simpleName}): ${e.message}. Attempting standard reset fallback.")
+                    try {
+                        auth.sendPasswordResetEmail(trimmedEmail).await()
+                        Log.d("PasswordReset", "Fallback reset email successfully sent to $trimmedEmail")
+                        uiMessage.value = "Password reset email sent to $trimmedEmail. Check your inbox."
+                        onResult(true)
+                    } catch (fallbackEx: Exception) {
+                        Log.e("PasswordReset", "Fallback reset exception: ${fallbackEx.message}", fallbackEx)
+                        uiMessage.value = "Failed to send reset email: ${fallbackEx.localizedMessage ?: fallbackEx.message}"
+                        onResult(false)
+                    }
                 }
             } else {
-                uiMessage.value = "Password reset instructions sent to $trimmedEmail."
+                Log.e("PasswordReset", "FirebaseAuth instance is null in FirebaseManager!")
+                uiMessage.value = "Authentication service unavailable."
+                onResult(false)
             }
         }
     }
@@ -790,7 +823,25 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    private fun getFileInfoFromUri(context: Context, uri: Uri): Pair<Long, String> {
+        return try {
+            val cursor = context.contentResolver.query(uri, null, null, null, null)
+            cursor?.use {
+                if (it.moveToFirst()) {
+                    val sizeIndex = it.getColumnIndex(android.provider.OpenableColumns.SIZE)
+                    val nameIndex = it.getColumnIndex(android.provider.OpenableColumns.DISPLAY_NAME)
+                    val size = if (sizeIndex != -1) it.getLong(sizeIndex) else 0L
+                    val name = if (nameIndex != -1) it.getString(nameIndex) ?: "file.pdf" else "file.pdf"
+                    Pair(size, name)
+                } else Pair(0L, "file.pdf")
+            } ?: Pair(0L, "file.pdf")
+        } catch (e: Exception) {
+            Pair(0L, "file.pdf")
+        }
+    }
+
     fun createHandwrittenNotes(
+        context: Context,
         title: String,
         description: String,
         subject: String,
@@ -824,45 +875,14 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch {
             isUploading.value = true
             uploadProgress.value = 0.1f
-            uploadStatusText.value = "Connecting to Firebase Storage..."
+            uploadStatusText.value = "Initializing note draft..."
+            Log.d("NoteUpload", "Starting note upload process for user: ${user.id}, title: '$title'")
 
             val tempId = "note_${System.currentTimeMillis()}"
             val pricePaise = if (isFree) 0L else Listing.rupeesToPaise(price)
 
-            var digitalFilePath = pdfUri
-            if (pdfUri.startsWith("content://") || pdfUri.startsWith("file://")) {
-                uploadStatusText.value = "Uploading $pdfFileName..."
-                val pdfResult = repository.firestoreRepository.uploadDigitalFile(
-                    sellerUid = user.id,
-                    listingId = tempId,
-                    fileUri = Uri.parse(pdfUri),
-                    fileName = pdfFileName
-                )
-                digitalFilePath = pdfResult.getOrDefault(pdfUri)
-                uploadProgress.value = 0.5f
-            }
-
-            val uploadedUrls = mutableListOf<String>()
-            val localPreviewUris = previewImagesList.filter { it.startsWith("content://") || it.startsWith("file://") }
-            if (localPreviewUris.isNotEmpty()) {
-                uploadStatusText.value = "Uploading preview sample photos..."
-                localPreviewUris.forEachIndexed { idx, uriString ->
-                    val uri = Uri.parse(uriString)
-                    val result = repository.firestoreRepository.uploadListingImage(
-                        sellerUid = user.id,
-                        listingId = tempId,
-                        fileUri = uri
-                    )
-                    result.getOrNull()?.let { uploadedUrls.add(it) }
-                }
-            }
-
-            val webPreviews = previewImagesList.filter { !it.startsWith("content://") && !it.startsWith("file://") && it.isNotBlank() }
-            val finalPreviewUrls = (uploadedUrls + webPreviews).ifEmpty {
-                listOf("https://images.unsplash.com/photo-1544716278-ca5e3f4abd8c?w=500")
-            }
-
-            val listing = Listing(
+            // 1. Create draft listing in Firestore so Railway backend authorization check passes
+            val draftListing = Listing(
                 id = tempId,
                 sellerId = user.id,
                 sellerDisplayName = user.name,
@@ -875,16 +895,120 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 condition = "New",
                 collegeName = college.ifEmpty { user.collegeName },
                 city = "New Delhi",
+                imageUrls = emptyList(),
+                digitalFilePath = "",
+                status = "draft",
+                isApproved = true
+            )
+
+            val draftResult = repository.firestoreRepository.createListing(draftListing)
+            if (draftResult.isFailure) {
+                isUploading.value = false
+                val err = draftResult.exceptionOrNull()?.message ?: "Failed to initialize listing draft."
+                Log.e("NoteUpload", "Draft creation failed: $err")
+                uiMessage.value = "Upload Failed: $err"
+                return@launch
+            }
+
+            var digitalFilePath = ""
+            try {
+                if (pdfUri.startsWith("content://") || pdfUri.startsWith("file://")) {
+                    val uri = Uri.parse(pdfUri)
+                    val (fileSize, _) = getFileInfoFromUri(context, uri)
+                    val safeSize = if (fileSize > 0) fileSize else 1024L * 1024L
+
+                    uploadStatusText.value = "Requesting S3 upload URL from Railway backend..."
+                    Log.d("NoteUpload", "Sending POST /api/v1/storage/presign-upload for listing $tempId, size: $safeSize bytes")
+
+                    val presignedResponse = railwayStorageRepository.requestPresignedUploadUrl(
+                        listingId = tempId,
+                        fileCategory = "digital_pdf",
+                        contentType = "application/pdf",
+                        fileSizeBytes = safeSize
+                    )
+
+                    uploadStatusText.value = "Uploading $pdfFileName to Railway S3 storage..."
+                    uploadProgress.value = 0.4f
+                    Log.d("NoteUpload", "Uploading PDF bytes directly to S3: ${presignedResponse.objectKey}")
+
+                    val inputStream = context.contentResolver.openInputStream(uri)
+                        ?: throw IllegalStateException("Could not open input stream for PDF file.")
+
+                    val uploadSuccess = inputStream.use { stream ->
+                        railwayStorageRepository.uploadFileDirectlyToS3(
+                            uploadUrl = presignedResponse.uploadUrl,
+                            inputStream = stream,
+                            contentType = "application/pdf",
+                            contentLength = safeSize
+                        )
+                    }
+
+                    if (!uploadSuccess) {
+                        throw IllegalStateException("S3 PUT upload failed for digital PDF.")
+                    }
+
+                    digitalFilePath = presignedResponse.objectKey
+                    Log.d("NoteUpload", "PDF successfully uploaded to S3. Object key: $digitalFilePath")
+                    uploadProgress.value = 0.7f
+                } else {
+                    digitalFilePath = pdfUri
+                }
+            } catch (e: Exception) {
+                Log.e("NoteUpload", "Digital PDF upload exception: ${e.message}", e)
+                isUploading.value = false
+                uiMessage.value = "PDF Upload Failed: ${e.localizedMessage ?: e.message}"
+                return@launch
+            }
+
+            // 2. Upload Sample Preview Photos if attached
+            val uploadedImageKeys = mutableListOf<String>()
+            val localPreviewUris = previewImagesList.filter { it.startsWith("content://") || it.startsWith("file://") }
+            if (localPreviewUris.isNotEmpty()) {
+                uploadStatusText.value = "Uploading preview photos to Railway S3..."
+                localPreviewUris.forEachIndexed { idx, uriString ->
+                    try {
+                        val uri = Uri.parse(uriString)
+                        val (imgSize, _) = getFileInfoFromUri(context, uri)
+                        val safeImgSize = if (imgSize > 0) imgSize else 512L * 1024L
+                        val presignedImg = railwayStorageRepository.requestPresignedUploadUrl(
+                            listingId = tempId,
+                            fileCategory = "listing_image",
+                            contentType = "image/jpeg",
+                            fileSizeBytes = safeImgSize
+                        )
+                        context.contentResolver.openInputStream(uri)?.use { stream ->
+                            val success = railwayStorageRepository.uploadFileDirectlyToS3(
+                                uploadUrl = presignedImg.uploadUrl,
+                                inputStream = stream,
+                                contentType = "image/jpeg",
+                                contentLength = safeImgSize
+                            )
+                            if (success) uploadedImageKeys.add(presignedImg.objectKey)
+                        }
+                    } catch (e: Exception) {
+                        Log.e("NoteUpload", "Sample photo upload failed for index $idx: ${e.message}")
+                    }
+                    uploadProgress.value = 0.7f + (0.2f * (idx + 1) / localPreviewUris.size)
+                }
+            }
+
+            val webPreviews = previewImagesList.filter { !it.startsWith("content://") && !it.startsWith("file://") && it.isNotBlank() }
+            val finalPreviewUrls = (uploadedImageKeys + webPreviews).ifEmpty {
+                listOf("https://images.unsplash.com/photo-1544716278-ca5e3f4abd8c?w=500")
+            }
+
+            // 3. Update draft listing in Firestore to active status with object keys
+            val finalListing = draftListing.copy(
                 imageUrls = finalPreviewUrls,
                 digitalFilePath = digitalFilePath,
                 status = "active",
                 isApproved = true
             )
 
-            val createResult = repository.firestoreRepository.createListing(listing)
-            if (createResult.isSuccess) {
+            val updateResult = repository.firestoreRepository.updateListing(finalListing)
+            if (updateResult.isSuccess) {
                 val note = NoteEntity(
-                    id = createResult.getOrDefault(tempId),
+                    id = tempId,
                     title = title,
                     description = description,
                     isFree = isFree,
@@ -902,11 +1026,14 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 repository.insertNote(note)
                 uploadProgress.value = 1.0f
                 isUploading.value = false
-                uploadStatusText.value = "Notes uploaded successfully!"
-                uiMessage.value = "Notes published to StudySwap Marketplace!"
+                uploadStatusText.value = "Note published successfully!"
+                uiMessage.value = "Digital Note published to StudySwap Marketplace!"
+                Log.d("NoteUpload", "Note published successfully with object key: $digitalFilePath")
             } else {
                 isUploading.value = false
-                uiMessage.value = "Failed to upload notes: ${createResult.exceptionOrNull()?.message}"
+                val err = updateResult.exceptionOrNull()?.message ?: "Failed to activate listing."
+                Log.e("NoteUpload", "Failed to update listing status: $err")
+                uiMessage.value = "Failed to publish note: $err"
             }
         }
     }

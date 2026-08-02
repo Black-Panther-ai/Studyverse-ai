@@ -436,8 +436,11 @@ fun AuthScreen(
 
                         Button(
                             onClick = {
-                                viewModel.sendPasswordReset(emailInput)
-                                authMode = "LOGIN"
+                                viewModel.sendPasswordReset(emailInput) { success ->
+                                    if (success) {
+                                        authMode = "LOGIN"
+                                    }
+                                }
                             },
                             modifier = Modifier.fillMaxWidth().height(48.dp).testTag("submit_reset_button"),
                             colors = ButtonDefaults.buttonColors(containerColor = PrimaryBlue),

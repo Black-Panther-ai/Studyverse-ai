@@ -297,7 +297,10 @@ class FirestoreRepository {
 
         return try {
             val ref = storage.reference.child(storagePath)
-            ref.putFile(fileUri).await()
+            val metadata = com.google.firebase.storage.StorageMetadata.Builder()
+                .setContentType(if (cleanMime.startsWith("image/")) cleanMime else "image/jpeg")
+                .build()
+            ref.putFile(fileUri, metadata).await()
             val downloadUrl = ref.downloadUrl.await().toString()
             Result.success(downloadUrl)
         } catch (e: Exception) {
@@ -330,7 +333,10 @@ class FirestoreRepository {
 
         return try {
             val ref = storage.reference.child(storagePath)
-            ref.putFile(fileUri).await()
+            val metadata = com.google.firebase.storage.StorageMetadata.Builder()
+                .setContentType("application/pdf")
+                .build()
+            ref.putFile(fileUri, metadata).await()
             // Store storagePath as digitalFilePath (private, not public download URL)
             Result.success(storagePath)
         } catch (e: Exception) {

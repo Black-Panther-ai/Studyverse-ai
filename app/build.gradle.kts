@@ -23,6 +23,7 @@ android {
 
     testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     buildConfigField("String", "BACKEND_BASE_URL", "\"https://studyverse-ai-production.up.railway.app\"")
+    buildConfigField("String", "GEMINI_API_KEY", "\"${System.getenv("GEMINI_API_KEY") ?: "MY_GEMINI_API_KEY"}\"")
   }
 
   buildTypes {
