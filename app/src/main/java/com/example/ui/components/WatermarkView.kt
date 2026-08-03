@@ -133,6 +133,7 @@ fun WatermarkDialog(
         },
         confirmButton = {
             val context = androidx.compose.ui.platform.LocalContext.current
+            var downloadedFile by remember { mutableStateOf<java.io.File?>(null) }
             var pdfFileToView by remember { mutableStateOf<java.io.File?>(null) }
 
             pdfFileToView?.let { file ->
@@ -141,6 +142,20 @@ fun WatermarkDialog(
                     title = noteTitle,
                     onDismiss = {
                         pdfFileToView = null
+                        onDismiss()
+                    }
+                )
+            }
+
+            downloadedFile?.let { file ->
+                DownloadCompleteDialog(
+                    pdfFile = file,
+                    noteTitle = noteTitle,
+                    onOpenInApp = { openFile ->
+                        pdfFileToView = openFile
+                    },
+                    onDismiss = {
+                        downloadedFile = null
                         onDismiss()
                     }
                 )
@@ -157,7 +172,7 @@ fun WatermarkDialog(
                     )
                     if (pdfFile != null && pdfFile.exists()) {
                         onDownload()
-                        pdfFileToView = pdfFile
+                        downloadedFile = pdfFile
                     } else {
                         android.widget.Toast.makeText(context, "Failed to generate PDF file.", android.widget.Toast.LENGTH_SHORT).show()
                         onDismiss()
@@ -168,7 +183,7 @@ fun WatermarkDialog(
             ) {
                 Icon(Icons.Default.Download, contentDescription = null, modifier = Modifier.size(18.dp))
                 Spacer(modifier = Modifier.width(6.dp))
-                Text("Read In-App PDF")
+                Text("Download & Read PDF")
             }
         },
         dismissButton = {

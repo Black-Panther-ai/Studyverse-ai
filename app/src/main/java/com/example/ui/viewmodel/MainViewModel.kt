@@ -572,8 +572,32 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    fun downloadFreeNote(note: NoteEntity) {
+    fun downloadFreeNote(note: NoteEntity, context: Context? = null) {
         uiMessage.value = "Downloading ${note.title}..."
+        if (context != null) {
+            val downloadUrl = note.pdfUriOrUrl
+            val fileName = "${note.title.replace(" ", "_")}.pdf"
+            if (downloadUrl.startsWith("http://") || downloadUrl.startsWith("https://")) {
+                com.example.util.AndroidDownloadManagerHelper.downloadPdfWithManager(
+                    context = context,
+                    downloadUrl = downloadUrl,
+                    title = note.title,
+                    fileName = fileName
+                )
+            } else {
+                val user = currentUser.value
+                val pdfFile = com.example.util.PdfDownloadHelper.generateAndSavePdf(
+                    context = context,
+                    noteTitle = note.title,
+                    buyerName = user?.name ?: "Student User",
+                    orderId = "FREE_${System.currentTimeMillis().toString().takeLast(6)}",
+                    authorName = note.authorName
+                )
+                if (pdfFile != null && pdfFile.exists()) {
+                    uiMessage.value = "Downloaded ${note.title} to Downloads folder!"
+                }
+            }
+        }
     }
 
     private var isCheckoutInProgress = false

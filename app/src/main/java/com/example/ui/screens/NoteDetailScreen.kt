@@ -185,7 +185,7 @@ fun NoteDetailScreen(
                 Button(
                     onClick = {
                         if (note.isFree) {
-                            viewModel.downloadFreeNote(note)
+                            viewModel.downloadFreeNote(note, context)
                         } else {
                             viewModel.purchaseDigitalNoteWithInstamojo(context, note, simulateSuccess = true)
                         }
