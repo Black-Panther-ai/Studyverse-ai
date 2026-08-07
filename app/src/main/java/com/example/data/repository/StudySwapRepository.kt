@@ -49,6 +49,8 @@ class StudySwapRepository(private val db: AppDatabase) {
     suspend fun deleteProduct(product: ProductEntity) = db.productDao().deleteProduct(product)
 
     suspend fun insertOrder(order: OrderEntity) = db.orderDao().insertOrder(order)
+    suspend fun insertOrders(orders: List<OrderEntity>) = db.orderDao().insertOrders(orders)
+    suspend fun deleteOrdersByBuyer(buyerId: String) = db.orderDao().deleteOrdersByBuyer(buyerId)
     suspend fun insertPayment(payment: PaymentEntity) = db.paymentDao().insertPayment(payment)
 
     suspend fun insertAiHistory(history: AiHistoryEntity) = db.aiHistoryDao().insertHistory(history)

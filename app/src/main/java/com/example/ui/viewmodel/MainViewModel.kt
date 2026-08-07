@@ -15,6 +15,7 @@ import com.example.data.model.UserProfile
 import com.example.data.repository.RailwayStorageRepository
 import com.example.data.repository.RazorpayPaymentRepository
 import com.example.data.repository.StudySwapRepository
+import com.example.util.AndroidDownloadManagerHelper
 import com.example.payment.InstamojoPaymentHelper
 import com.example.payment.InstamojoResult
 import com.google.firebase.FirebaseNetworkException
@@ -28,6 +29,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.*
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.tasks.await
+import java.io.File
 import java.text.SimpleDateFormat
 import java.util.*
 
@@ -53,6 +55,8 @@ enum class AppTab {
     AI_ASSISTANT
 }
 
+enum class DashboardSyncState { IDLE, LOADING, SUCCESS, ERROR }
+
 class MainViewModel(application: Application) : AndroidViewModel(application) {
 
     private val db = AppDatabase.getDatabase(application)
@@ -60,6 +64,17 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     val railwayStorageRepository = RailwayStorageRepository()
     val razorpayPaymentRepository = RazorpayPaymentRepository()
     private val prefs = application.getSharedPreferences("studyswap_prefs", Context.MODE_PRIVATE)
+
+    // Sync State Tracking
+    private val _dashboardSyncState = MutableStateFlow(DashboardSyncState.IDLE)
+    val dashboardSyncState: StateFlow<DashboardSyncState> = _dashboardSyncState.asStateFlow()
+
+    private val _syncedOrders = MutableStateFlow<List<OrderEntity>>(emptyList())
+    val syncedOrders: StateFlow<List<OrderEntity>> = _syncedOrders.asStateFlow()
+
+    // Download State Tracking
+    val downloadedPdfFile = MutableStateFlow<java.io.File?>(null)
+    val isDownloadingPdf = MutableStateFlow(false)
 
     // Razorpay State Tracking
     var pendingInternalOrderId: String? = null
@@ -202,11 +217,26 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             }
 
             // Sync live Firestore listings to Room read cache
-            activeListings.collect { listings ->
-                if (listings.isNotEmpty()) {
-                    repository.syncListingsToRoomCache(listings)
+            viewModelScope.launch {
+                activeListings.collect { listings ->
+                    if (listings.isNotEmpty()) {
+                        repository.syncListingsToRoomCache(listings)
+                    }
                 }
             }
+
+            // Sync live purchases automatically on user change / app start / login
+            viewModelScope.launch {
+                _currentUserId.collect { uid ->
+                    if (!uid.isNullOrBlank()) {
+                        syncPurchasesFromFirestore()
+                    } else {
+                        _syncedOrders.value = emptyList()
+                        _dashboardSyncState.value = DashboardSyncState.IDLE
+                    }
+                }
+            }
+            observeNetworkConnectivity(application)
         }
     }
 
@@ -664,6 +694,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 )
                 if (result.status == "paid") {
                     uiMessage.value = "Payment Successful! Order verified."
+                    syncPurchasesFromFirestore()
                 } else {
                     uiMessage.value = "Payment Status: ${result.message}"
                 }
@@ -1059,6 +1090,206 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 Log.e("NoteUpload", "Failed to update listing status: $err")
                 uiMessage.value = "Failed to publish note: $err"
             }
+        }
+    }
+
+    fun syncPurchasesFromFirestore() {
+        val userId = _currentUserId.value
+        if (userId.isNullOrBlank()) {
+            _syncedOrders.value = emptyList()
+            _dashboardSyncState.value = DashboardSyncState.IDLE
+            return
+        }
+
+        viewModelScope.launch {
+            _dashboardSyncState.value = DashboardSyncState.LOADING
+            try {
+                val db = FirebaseManager.firestore
+                if (db == null) throw IllegalStateException("Firestore is not initialized")
+
+                Log.d("PurchasesSync", "Fetching paid orders from Firestore for user $userId")
+                
+                // Fetch paid orders
+                val ordersSnapshot = db.collection("orders")
+                    .whereEqualTo("buyerId", userId)
+                    .whereEqualTo("status", "paid")
+                    .get()
+                    .await()
+
+                // Fetch entitlements
+                val entitlementsSnapshot = db.collection("ebook_entitlements")
+                    .whereEqualTo("buyerId", userId)
+                    .get()
+                    .await()
+
+                val entitlementsMap = entitlementsSnapshot.documents.associateBy(
+                    { it.getString("orderId") ?: "" },
+                    { it.getString("digitalFileObjectKey") ?: "" }
+                )
+
+                val syncedEntities = ordersSnapshot.documents.map { doc ->
+                    val id = doc.getString("id") ?: doc.id
+                    val buyerId = doc.getString("buyerId") ?: userId
+                    val sellerId = doc.getString("sellerId") ?: ""
+                    val listingId = doc.getString("listingId") ?: ""
+                    val listingTitle = doc.getString("listingTitleSnapshot") ?: "Digital Note"
+                    val listingType = doc.getString("listingType") ?: "digital_note"
+                    val amountPaise = doc.getLong("amountPaise") ?: 0L
+                    val status = doc.getString("status") ?: "paid"
+                    val paymentId = doc.getString("razorpayPaymentId") ?: ""
+                    
+                    // Retrieve timestamp properly
+                    val timestamp = try {
+                        doc.getTimestamp("paidAt")?.toDate()?.time
+                            ?: doc.getTimestamp("createdAt")?.toDate()?.time
+                            ?: System.currentTimeMillis()
+                    } catch (e: Exception) {
+                        System.currentTimeMillis()
+                    }
+
+                    // Entitlement link
+                    val s3ObjectKey = entitlementsMap[id] ?: ""
+
+                    OrderEntity(
+                        id = id,
+                        buyerId = buyerId,
+                        buyerName = currentUser.value?.name ?: "Student User",
+                        sellerId = sellerId,
+                        itemId = listingId,
+                        itemTitle = listingTitle,
+                        itemType = if (listingType == "digital_note" || listingType == "ebook") "DIGITAL_NOTE" else "PHYSICAL_PRODUCT",
+                        price = amountPaise.toDouble() / 100.0,
+                        status = if (status == "paid") "COMPLETED" else "PENDING",
+                        paymentId = paymentId,
+                        timestamp = timestamp,
+                        watermarkedDownloadUrl = s3ObjectKey
+                    )
+                }
+
+                Log.d("PurchasesSync", "Successfully fetched ${syncedEntities.size} paid orders. Updating Room.")
+
+                // Sync Room Cache: Firestore is the source of truth
+                repository.deleteOrdersByBuyer(userId)
+                if (syncedEntities.isNotEmpty()) {
+                    repository.insertOrders(syncedEntities)
+                }
+
+                _syncedOrders.value = syncedEntities
+                _dashboardSyncState.value = DashboardSyncState.SUCCESS
+            } catch (e: Exception) {
+                Log.e("PurchasesSync", "Sync failed: ${e.message}. Falling back to Room cache.", e)
+                // Fallback to Room offline cache
+                try {
+                    val localOrders = repository.getOrdersByBuyer(userId).first()
+                    _syncedOrders.value = localOrders
+                    if (localOrders.isNotEmpty()) {
+                        _dashboardSyncState.value = DashboardSyncState.SUCCESS
+                    } else {
+                        _dashboardSyncState.value = DashboardSyncState.ERROR
+                    }
+                } catch (roomEx: Exception) {
+                    Log.e("PurchasesSync", "Room query failed: ${roomEx.message}")
+                    _dashboardSyncState.value = DashboardSyncState.ERROR
+                }
+            }
+        }
+    }
+
+    fun downloadPurchasedNote(
+        context: Context,
+        orderId: String,
+        listingId: String,
+        noteTitle: String,
+        onComplete: (File?) -> Unit
+    ) {
+        val userId = _currentUserId.value
+        if (userId.isNullOrBlank()) {
+            uiMessage.value = "Please sign in to download."
+            onComplete(null)
+            return
+        }
+
+        viewModelScope.launch {
+            isDownloadingPdf.value = true
+            uiMessage.value = "Checking download entitlement..."
+            try {
+                val db = FirebaseManager.firestore
+                if (db == null) throw IllegalStateException("Firestore unavailable")
+
+                // 1. Read Entitlement
+                val entitlementQuery = db.collection("ebook_entitlements")
+                    .whereEqualTo("buyerId", userId)
+                    .whereEqualTo("listingId", listingId)
+                    .whereEqualTo("orderId", orderId)
+                    .whereEqualTo("status", "active")
+                    .limit(1)
+                    .get()
+                    .await()
+
+                if (entitlementQuery.isEmpty) {
+                    // Check if owner
+                    val listingDoc = db.collection("listings").document(listingId).get().await()
+                    val isOwner = listingDoc.getString("sellerId") == userId
+                    if (!isOwner) {
+                        throw IllegalStateException("No active download entitlement found.")
+                    }
+                }
+
+                // 2. Request Signed URL
+                uiMessage.value = "Requesting download URL from S3..."
+                val signedUrl = railwayStorageRepository.requestPrivateDownloadUrl(listingId, orderId)
+
+                // 3 & 4. Download via DownloadManager & Save into Downloads folder
+                uiMessage.value = "Starting secure download..."
+                val fileName = "${noteTitle.replace(" ", "_")}.pdf"
+                
+                AndroidDownloadManagerHelper.downloadPdfWithManager(
+                    context = context,
+                    downloadUrl = signedUrl,
+                    title = noteTitle,
+                    fileName = fileName,
+                    onComplete = { file ->
+                        isDownloadingPdf.value = false
+                        if (file != null && file.exists()) {
+                            downloadedPdfFile.value = file
+                            uiMessage.value = "Download completed successfully!"
+                            onComplete(file)
+                        } else {
+                            uiMessage.value = "Download failed."
+                            onComplete(null)
+                        }
+                    }
+                )
+            } catch (e: Exception) {
+                Log.e("DownloadFlow", "Error downloading note: ${e.message}", e)
+                uiMessage.value = "Download Failed: ${e.localizedMessage ?: e.message}"
+                isDownloadingPdf.value = false
+                onComplete(null)
+            }
+        }
+    }
+
+    fun clearDownloadedFile() {
+        downloadedPdfFile.value = null
+    }
+
+    private fun observeNetworkConnectivity(context: Context) {
+        try {
+            val connectivityManager = context.getSystemService(Context.CONNECTIVITY_SERVICE) as android.net.ConnectivityManager
+            val networkRequest = android.net.NetworkRequest.Builder()
+                .addCapability(android.net.NetworkCapabilities.NET_CAPABILITY_INTERNET)
+                .build()
+            
+            val networkCallback = object : android.net.ConnectivityManager.NetworkCallback() {
+                override fun onAvailable(network: android.net.Network) {
+                    super.onAvailable(network)
+                    Log.d("PurchasesSync", "Network became available, triggering purchase sync...")
+                    syncPurchasesFromFirestore()
+                }
+            }
+            connectivityManager.registerNetworkCallback(networkRequest, networkCallback)
+        } catch (e: Exception) {
+            Log.e("MainViewModel", "Failed to register network callback: ${e.message}", e)
         }
     }
 

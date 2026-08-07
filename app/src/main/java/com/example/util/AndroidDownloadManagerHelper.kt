@@ -55,11 +55,9 @@ object AndroidDownloadManagerHelper {
                             Log.e(TAG, "Error unregistering receiver: ${e.message}")
                         }
 
-                        val downloadsFolder = Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS)
-                        val downloadedFile = File(downloadsFolder, sanitizedFileName)
-
-                        Log.d(TAG, "Download complete for ID $downloadId. Local file: ${downloadedFile.absolutePath}")
-                        onComplete(if (downloadedFile.exists()) downloadedFile else null)
+                        val resolvedFile = copyUriToCache(context, downloadManager, downloadId, sanitizedFileName)
+                        Log.d(TAG, "Download complete for ID $downloadId. Cache file: ${resolvedFile?.absolutePath}")
+                        onComplete(resolvedFile)
                     }
                 }
             }
@@ -83,6 +81,32 @@ object AndroidDownloadManagerHelper {
             Toast.makeText(context, "Failed to start download: ${e.localizedMessage ?: e.message}", Toast.LENGTH_LONG).show()
             onComplete(null)
             -1L
+        }
+    }
+
+    private fun copyUriToCache(
+        context: Context,
+        downloadManager: DownloadManager,
+        downloadId: Long,
+        targetFileName: String
+    ): File? {
+        return try {
+            val pfd = downloadManager.openDownloadedFile(downloadId) ?: return null
+            val inputStream = java.io.FileInputStream(pfd.fileDescriptor)
+            val cacheFolder = File(context.cacheDir, "study_downloads").apply { mkdirs() }
+            val cacheFile = File(cacheFolder, targetFileName)
+            
+            inputStream.use { input ->
+                cacheFile.outputStream().use { output ->
+                    input.copyTo(output)
+                }
+            }
+            pfd.close()
+            Log.d(TAG, "Successfully copied download ID $downloadId to cache: ${cacheFile.absolutePath}")
+            cacheFile
+        } catch (e: Exception) {
+            Log.e(TAG, "Failed to copy downloaded file to cache: ${e.message}", e)
+            null
         }
     }
 

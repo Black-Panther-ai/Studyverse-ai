@@ -27,13 +27,14 @@ import java.util.*
 fun BuyerDashboardScreen(
     viewModel: MainViewModel
 ) {
-    val myOrders by viewModel.myOrders.collectAsState()
+    val myOrders by viewModel.syncedOrders.collectAsState()
+    val syncState by viewModel.dashboardSyncState.collectAsState()
     val myPayments by viewModel.myPayments.collectAsState()
     val currentUser by viewModel.currentUser.collectAsState()
 
     var activeTab by remember { mutableStateOf("Purchases") } // "Purchases", "Downloads", "PaymentHistory"
     var searchQuery by remember { mutableStateOf("") }
-    var showWatermarkForOrder by remember { mutableStateOf<String?>(null) }
+    var showWatermarkForOrder by remember { mutableStateOf<com.example.data.local.entities.OrderEntity?>(null) }
 
     val myPurchases = remember(myOrders) { myOrders.filter { it.price > 0 } }
     val myDownloads = myOrders
@@ -51,7 +52,7 @@ fun BuyerDashboardScreen(
                 fontWeight = FontWeight.ExtraBold
             )
             Text(
-                text = "Manage your purchases, instant downloads, and Instamojo payments.",
+                text = "Manage your purchases, instant downloads, and payments.",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
@@ -83,7 +84,7 @@ fun BuyerDashboardScreen(
                         Row(modifier = Modifier.padding(8.dp), verticalAlignment = Alignment.CenterVertically) {
                             Icon(Icons.Default.Verified, contentDescription = null, tint = Color.White, modifier = Modifier.size(16.dp))
                             Spacer(modifier = Modifier.width(4.dp))
-                            Text("Instamojo", color = Color.White, fontSize = 10.sp, fontWeight = FontWeight.Bold)
+                            Text("Razorpay", color = Color.White, fontSize = 10.sp, fontWeight = FontWeight.Bold)
                         }
                     }
                 }
@@ -133,16 +134,63 @@ fun BuyerDashboardScreen(
             Spacer(modifier = Modifier.height(14.dp))
         }
 
+        // 1. Loading State
+        if (syncState == com.example.ui.viewmodel.DashboardSyncState.LOADING) {
+            item {
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(32.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    CircularProgressIndicator(color = PrimaryBlue)
+                }
+            }
+        }
+
+        // 2. Retry State
+        if (syncState == com.example.ui.viewmodel.DashboardSyncState.ERROR) {
+            item {
+                Card(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(vertical = 8.dp),
+                    colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.errorContainer)
+                ) {
+                    Column(
+                        modifier = Modifier.padding(16.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally
+                    ) {
+                        Text(
+                            text = "Error synchronizing purchases from Firestore.",
+                            color = MaterialTheme.colorScheme.onErrorContainer,
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 13.sp
+                        )
+                        Spacer(modifier = Modifier.height(8.dp))
+                        Button(
+                            onClick = { viewModel.syncPurchasesFromFirestore() },
+                            colors = ButtonDefaults.buttonColors(containerColor = PrimaryBlue)
+                        ) {
+                            Text("Retry Sync", fontSize = 12.sp)
+                        }
+                    }
+                }
+            }
+        }
+
         if (activeTab == "Purchases") {
             val filtered = myPurchases.filter { it.itemTitle.contains(searchQuery, ignoreCase = true) }
             if (filtered.isEmpty()) {
-                item {
-                    Card(modifier = Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)) {
-                        Column(modifier = Modifier.padding(24.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-                            Icon(Icons.Default.ShoppingCart, contentDescription = null, tint = Color.Gray, modifier = Modifier.size(40.dp))
-                            Spacer(modifier = Modifier.height(8.dp))
-                            Text("No Purchases Yet", fontWeight = FontWeight.Bold)
-                            Text("Premium digital notes purchased via Instamojo will appear here.", fontSize = 11.sp, color = Color.Gray)
+                if (syncState == com.example.ui.viewmodel.DashboardSyncState.SUCCESS) {
+                    item {
+                        Card(modifier = Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)) {
+                            Column(modifier = Modifier.padding(24.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+                                Icon(Icons.Default.ShoppingCart, contentDescription = null, tint = Color.Gray, modifier = Modifier.size(40.dp))
+                                Spacer(modifier = Modifier.height(8.dp))
+                                Text("No Purchases Yet", fontWeight = FontWeight.Bold)
+                                Text("Premium digital notes purchased will appear here.", fontSize = 11.sp, color = Color.Gray)
+                            }
                         }
                     }
                 }
@@ -165,7 +213,7 @@ fun BuyerDashboardScreen(
                             Text("Order ID: ${order.id} • $dateStr", fontSize = 11.sp, color = Color.Gray)
                             Spacer(modifier = Modifier.height(10.dp))
                             Button(
-                                onClick = { showWatermarkForOrder = order.itemTitle },
+                                onClick = { showWatermarkForOrder = order },
                                 colors = ButtonDefaults.buttonColors(containerColor = PrimaryBlue),
                                 modifier = Modifier.fillMaxWidth()
                             ) {
@@ -180,13 +228,15 @@ fun BuyerDashboardScreen(
         } else if (activeTab == "Downloads") {
             val filtered = myDownloads.filter { it.itemTitle.contains(searchQuery, ignoreCase = true) }
             if (filtered.isEmpty()) {
-                item {
-                    Card(modifier = Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)) {
-                        Column(modifier = Modifier.padding(24.dp), horizontalAlignment = Alignment.CenterHorizontally) {
-                            Icon(Icons.Default.Folder, contentDescription = null, tint = Color.Gray, modifier = Modifier.size(40.dp))
-                            Spacer(modifier = Modifier.height(8.dp))
-                            Text("No Downloads Yet", fontWeight = FontWeight.Bold)
-                            Text("All downloaded free notes and paid materials will appear here.", fontSize = 11.sp, color = Color.Gray)
+                if (syncState == com.example.ui.viewmodel.DashboardSyncState.SUCCESS) {
+                    item {
+                        Card(modifier = Modifier.fillMaxWidth(), colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.surfaceVariant)) {
+                            Column(modifier = Modifier.padding(24.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+                                Icon(Icons.Default.Folder, contentDescription = null, tint = Color.Gray, modifier = Modifier.size(40.dp))
+                                Spacer(modifier = Modifier.height(8.dp))
+                                Text("No Downloads Yet", fontWeight = FontWeight.Bold)
+                                Text("All downloaded free notes and paid materials will appear here.", fontSize = 11.sp, color = Color.Gray)
+                            }
                         }
                     }
                 }
@@ -215,7 +265,7 @@ fun BuyerDashboardScreen(
                             Text(order.itemTitle, fontWeight = FontWeight.Bold, fontSize = 14.sp)
                             Spacer(modifier = Modifier.height(8.dp))
                             OutlinedButton(
-                                onClick = { showWatermarkForOrder = order.itemTitle },
+                                onClick = { showWatermarkForOrder = order },
                                 modifier = Modifier.fillMaxWidth()
                             ) {
                                 Icon(Icons.Default.PictureAsPdf, contentDescription = null, modifier = Modifier.size(16.dp))
@@ -236,7 +286,7 @@ fun BuyerDashboardScreen(
                             Icon(Icons.Default.Payment, contentDescription = null, tint = Color.Gray, modifier = Modifier.size(40.dp))
                             Spacer(modifier = Modifier.height(8.dp))
                             Text("No Payment Logs", fontWeight = FontWeight.Bold)
-                            Text("All Instamojo transaction logs (Success / Failed) will appear here.", fontSize = 11.sp, color = Color.Gray)
+                            Text("All transaction logs (Success / Failed) will appear here.", fontSize = 11.sp, color = Color.Gray)
                         }
                     }
                 }
@@ -274,15 +324,26 @@ fun BuyerDashboardScreen(
         }
     }
 
-    showWatermarkForOrder?.let { title ->
-        val dateStr = remember { SimpleDateFormat("yyyy-MM-dd HH:mm", Locale.getDefault()).format(Date()) }
+    showWatermarkForOrder?.let { order ->
+        val dateStr = remember(order) { SimpleDateFormat("dd MMM yyyy, HH:mm", Locale.getDefault()).format(Date(order.timestamp)) }
         WatermarkDialog(
-            noteTitle = title,
+            noteTitle = order.itemTitle,
             buyerName = currentUser?.name ?: "Student User",
-            orderId = "ORD_INSTAMOJO",
+            orderId = order.id,
             purchaseDate = dateStr,
             onDismiss = { showWatermarkForOrder = null },
-            onDownload = { viewModel.uiMessage.value = "Downloaded watermarked PDF to device!" }
+            onDownload = {
+                viewModel.uiMessage.value = "Watermarked S3 PDF Download Complete!"
+            },
+            onDownloadPdf = { context, onComplete ->
+                viewModel.downloadPurchasedNote(
+                    context = context,
+                    orderId = order.id,
+                    listingId = order.itemId,
+                    noteTitle = order.itemTitle,
+                    onComplete = onComplete
+                )
+            }
         )
     }
 }

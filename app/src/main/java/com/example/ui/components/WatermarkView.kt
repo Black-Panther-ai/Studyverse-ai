@@ -30,7 +30,8 @@ fun WatermarkDialog(
     orderId: String,
     purchaseDate: String,
     onDismiss: () -> Unit,
-    onDownload: () -> Unit
+    onDownload: () -> Unit,
+    onDownloadPdf: ((android.content.Context, (java.io.File?) -> Unit) -> Unit)? = null
 ) {
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -161,29 +162,54 @@ fun WatermarkDialog(
                 )
             }
 
-            Button(
-                onClick = {
-                    val pdfFile = com.example.util.PdfDownloadHelper.generateAndSavePdf(
-                        context = context,
-                        noteTitle = noteTitle,
-                        buyerName = buyerName,
-                        orderId = orderId,
-                        authorName = "Verified Note Author"
-                    )
-                    if (pdfFile != null && pdfFile.exists()) {
-                        onDownload()
-                        downloadedFile = pdfFile
-                    } else {
-                        android.widget.Toast.makeText(context, "Failed to generate PDF file.", android.widget.Toast.LENGTH_SHORT).show()
-                        onDismiss()
-                    }
-                },
-                colors = ButtonDefaults.buttonColors(containerColor = PrimaryBlue),
-                modifier = Modifier.testTag("download_watermarked_pdf_button")
-            ) {
-                Icon(Icons.Default.Download, contentDescription = null, modifier = Modifier.size(18.dp))
-                Spacer(modifier = Modifier.width(6.dp))
-                Text("Download & Read PDF")
+            var isS3Downloading by remember { mutableStateOf(false) }
+
+            if (isS3Downloading) {
+                Box(
+                    modifier = Modifier.padding(16.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    CircularProgressIndicator(color = PrimaryBlue, modifier = Modifier.size(24.dp))
+                }
+            } else {
+                Button(
+                    onClick = {
+                        if (onDownloadPdf != null) {
+                            isS3Downloading = true
+                            onDownloadPdf(context) { file ->
+                                isS3Downloading = false
+                                if (file != null && file.exists()) {
+                                    onDownload()
+                                    downloadedFile = file
+                                } else {
+                                    android.widget.Toast.makeText(context, "Failed to download PDF.", android.widget.Toast.LENGTH_SHORT).show()
+                                    onDismiss()
+                                }
+                            }
+                        } else {
+                            val pdfFile = com.example.util.PdfDownloadHelper.generateAndSavePdf(
+                                context = context,
+                                noteTitle = noteTitle,
+                                buyerName = buyerName,
+                                orderId = orderId,
+                                authorName = "Verified Note Author"
+                            )
+                            if (pdfFile != null && pdfFile.exists()) {
+                                onDownload()
+                                downloadedFile = pdfFile
+                            } else {
+                                android.widget.Toast.makeText(context, "Failed to generate PDF file.", android.widget.Toast.LENGTH_SHORT).show()
+                                onDismiss()
+                            }
+                        }
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = PrimaryBlue),
+                    modifier = Modifier.testTag("download_watermarked_pdf_button")
+                ) {
+                    Icon(Icons.Default.Download, contentDescription = null, modifier = Modifier.size(18.dp))
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text("Download & Read PDF")
+                }
             }
         },
         dismissButton = {
