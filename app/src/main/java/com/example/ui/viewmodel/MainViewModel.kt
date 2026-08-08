@@ -603,7 +603,68 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun downloadFreeNote(note: NoteEntity, context: Context? = null) {
+        val user = currentUser.value
+        if (user == null) {
+            uiMessage.value = "Please sign in to download notes."
+            return
+        }
+
         uiMessage.value = "Downloading ${note.title}..."
+        val downloadId = "download_${user.id}_${note.id}"
+        val timestamp = System.currentTimeMillis()
+
+        val onDownloadSuccess = {
+            uiMessage.value = "Downloaded ${note.title} to Downloads folder!"
+            
+            // 1. Log download history to Firestore
+            viewModelScope.launch {
+                try {
+                    val db = FirebaseManager.firestore
+                    if (db != null) {
+                        val downloadMap = mapOf(
+                            "id" to downloadId,
+                            "userId" to user.id,
+                            "noteId" to note.id,
+                            "noteTitle" to note.title,
+                            "authorName" to note.authorName,
+                            "timestamp" to timestamp,
+                            "pdfUriOrUrl" to note.pdfUriOrUrl
+                        )
+                        db.collection("download_history").document(downloadId).set(downloadMap).await()
+                        Log.d("DownloadFree", "Successfully logged download history in Firestore: $downloadId")
+                    }
+                } catch (e: Exception) {
+                    Log.e("DownloadFree", "Firestore log failed: ${e.message}")
+                }
+            }
+
+            // 2. Insert order entity in Room immediately for instant dashboard refresh
+            viewModelScope.launch {
+                try {
+                    val localOrder = OrderEntity(
+                        id = downloadId,
+                        buyerId = user.id,
+                        buyerName = user.name,
+                        sellerId = note.authorId,
+                        itemId = note.id,
+                        itemTitle = note.title,
+                        itemType = "DIGITAL_NOTE",
+                        price = 0.0,
+                        status = "COMPLETED",
+                        paymentId = "FREE",
+                        timestamp = timestamp,
+                        watermarkedDownloadUrl = note.pdfUriOrUrl
+                    )
+                    repository.insertOrders(listOf(localOrder))
+                    // Clean-sync cache with Firestore
+                    syncPurchasesFromFirestore()
+                } catch (roomEx: Exception) {
+                    Log.e("DownloadFree", "Room insert failed: ${roomEx.message}")
+                }
+            }
+        }
+
+        // Initiate actual file download
         if (context != null) {
             val downloadUrl = note.pdfUriOrUrl
             val fileName = "${note.title.replace(" ", "_")}.pdf"
@@ -612,19 +673,27 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     context = context,
                     downloadUrl = downloadUrl,
                     title = note.title,
-                    fileName = fileName
+                    fileName = fileName,
+                    onComplete = { file ->
+                        if (file != null && file.exists()) {
+                            onDownloadSuccess()
+                        } else {
+                            uiMessage.value = "Download failed for ${note.title}."
+                        }
+                    }
                 )
             } else {
-                val user = currentUser.value
                 val pdfFile = com.example.util.PdfDownloadHelper.generateAndSavePdf(
                     context = context,
                     noteTitle = note.title,
-                    buyerName = user?.name ?: "Student User",
-                    orderId = "FREE_${System.currentTimeMillis().toString().takeLast(6)}",
+                    buyerName = user.name,
+                    orderId = "FREE_${timestamp.toString().takeLast(6)}",
                     authorName = note.authorName
                 )
                 if (pdfFile != null && pdfFile.exists()) {
-                    uiMessage.value = "Downloaded ${note.title} to Downloads folder!"
+                    onDownloadSuccess()
+                } else {
+                    uiMessage.value = "Download failed for ${note.title}."
                 }
             }
         }
@@ -1010,8 +1079,17 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 }
             } catch (e: Exception) {
                 Log.e("NoteUpload", "Digital PDF upload exception: ${e.message}", e)
+                try {
+                    val db = FirebaseManager.firestore
+                    if (db != null) {
+                        db.collection("listings").document(tempId).delete().await()
+                        Log.d("NoteUpload", "Successfully rolled back/deleted draft listing: $tempId")
+                    }
+                } catch (rollbackEx: Exception) {
+                    Log.e("NoteUpload", "Failed to delete draft listing: ${rollbackEx.message}")
+                }
                 isUploading.value = false
-                uiMessage.value = "PDF Upload Failed: ${e.localizedMessage ?: e.message}"
+                uiMessage.value = "Upload Failed: LISTING_STORAGE_PDF_UPLOAD_FAILED: ${e.localizedMessage ?: e.message}"
                 return@launch
             }
 
@@ -1085,10 +1163,19 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 uiMessage.value = "Digital Note published to StudySwap Marketplace!"
                 Log.d("NoteUpload", "Note published successfully with object key: $digitalFilePath")
             } else {
+                try {
+                    val db = FirebaseManager.firestore
+                    if (db != null) {
+                        db.collection("listings").document(tempId).delete().await()
+                        Log.d("NoteUpload", "Successfully rolled back/deleted draft listing: $tempId")
+                    }
+                } catch (rollbackEx: Exception) {
+                    Log.e("NoteUpload", "Failed to delete draft listing: ${rollbackEx.message}")
+                }
                 isUploading.value = false
                 val err = updateResult.exceptionOrNull()?.message ?: "Failed to activate listing."
                 Log.e("NoteUpload", "Failed to update listing status: $err")
-                uiMessage.value = "Failed to publish note: $err"
+                uiMessage.value = "Upload Failed: LISTING_FIRESTORE_CREATE_FAILED: $err"
             }
         }
     }
@@ -1166,15 +1253,53 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     )
                 }
 
-                Log.d("PurchasesSync", "Successfully fetched ${syncedEntities.size} paid orders. Updating Room.")
+                // Fetch free downloads history
+                val downloadsSnapshot = db.collection("download_history")
+                    .whereEqualTo("userId", userId)
+                    .get()
+                    .await()
+
+                val freeDownloadEntities = downloadsSnapshot.documents.map { doc ->
+                    val id = doc.getString("id") ?: doc.id
+                    val noteId = doc.getString("noteId") ?: ""
+                    val noteTitle = doc.getString("noteTitle") ?: "Free Note"
+                    val authorName = doc.getString("authorName") ?: "Author"
+                    val timestamp = try {
+                        doc.getLong("timestamp")
+                            ?: doc.getTimestamp("timestamp")?.toDate()?.time
+                            ?: System.currentTimeMillis()
+                    } catch (e: java.lang.Exception) {
+                        System.currentTimeMillis()
+                    }
+                    val pdfUriOrUrl = doc.getString("pdfUriOrUrl") ?: ""
+
+                    OrderEntity(
+                        id = id,
+                        buyerId = userId,
+                        buyerName = currentUser.value?.name ?: "Student User",
+                        sellerId = "",
+                        itemId = noteId,
+                        itemTitle = noteTitle,
+                        itemType = "DIGITAL_NOTE",
+                        price = 0.0,
+                        status = "COMPLETED",
+                        paymentId = "FREE",
+                        timestamp = timestamp,
+                        watermarkedDownloadUrl = pdfUriOrUrl
+                    )
+                }
+
+                val combinedEntities = (syncedEntities + freeDownloadEntities).distinctBy { it.id }
+
+                Log.d("PurchasesSync", "Successfully fetched ${combinedEntities.size} combined orders/downloads. Updating Room.")
 
                 // Sync Room Cache: Firestore is the source of truth
                 repository.deleteOrdersByBuyer(userId)
-                if (syncedEntities.isNotEmpty()) {
-                    repository.insertOrders(syncedEntities)
+                if (combinedEntities.isNotEmpty()) {
+                    repository.insertOrders(combinedEntities)
                 }
 
-                _syncedOrders.value = syncedEntities
+                _syncedOrders.value = combinedEntities
                 _dashboardSyncState.value = DashboardSyncState.SUCCESS
             } catch (e: Exception) {
                 Log.e("PurchasesSync", "Sync failed: ${e.message}. Falling back to Room cache.", e)

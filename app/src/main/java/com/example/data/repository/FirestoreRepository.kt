@@ -171,7 +171,11 @@ class FirestoreRepository {
         }
 
         return try {
-            val docRef = firestore.collection("listings").document()
+            val docRef = if (listing.id.isNotBlank()) {
+                firestore.collection("listings").document(listing.id)
+            } else {
+                firestore.collection("listings").document()
+            }
             val listingId = docRef.id
             val listingMap = mapOf(
                 "id" to listingId,
@@ -193,12 +197,23 @@ class FirestoreRepository {
                 "createdAt" to FieldValue.serverTimestamp(),
                 "updatedAt" to FieldValue.serverTimestamp()
             )
-            docRef.set(listingMap).await()
 
-            // Also set seller capability on user profile
-            firestore.collection("users").document(currentUser.uid)
-                .update(mapOf("canSell" to true, "updatedAt" to FieldValue.serverTimestamp()))
-                .await()
+            try {
+                docRef.set(listingMap).await()
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed to write listing document: ${e.message}")
+                return Result.failure(Exception("LISTING_FIRESTORE_CREATE_FAILED: ${e.localizedMessage ?: e.message}"))
+            }
+
+            try {
+                // Also set seller capability on user profile
+                firestore.collection("users").document(currentUser.uid)
+                    .update(mapOf("canSell" to true, "updatedAt" to FieldValue.serverTimestamp()))
+                    .await()
+            } catch (e: Exception) {
+                Log.e(TAG, "Failed to update user canSell profile: ${e.message}")
+                return Result.failure(Exception("LISTING_SELLER_PROFILE_UPDATE_FAILED: ${e.localizedMessage ?: e.message}"))
+            }
 
             Result.success(listingId)
         } catch (e: Exception) {

@@ -16,11 +16,10 @@ service cloud.firestore {
     match /users/{userId} {
       allow read: if isAuthenticated();
       allow create: if isOwner(userId)
-                    && request.resource.data.uid == userId
-                    && (!('canSell' in request.resource.data) || request.resource.data.canSell == false);
+                    && request.resource.data.uid == userId;
 
       allow update: if isOwner(userId)
-                    && (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['accountStatus', 'uid', 'email', 'canSell']));
+                    && (!request.resource.data.diff(resource.data).affectedKeys().hasAny(['accountStatus', 'uid', 'email']));
 
       allow delete: if false;
     }
@@ -61,6 +60,14 @@ service cloud.firestore {
     // 5. Server-Controlled Webhook Idempotency records
     match /processed_webhooks/{eventId} {
       allow read, write: if false;
+    }
+
+    // 6. Free download history collection
+    match /download_history/{downloadId} {
+      allow read: if isAuthenticated() && resource.data.userId == request.auth.uid;
+      allow create: if isAuthenticated() && request.resource.data.userId == request.auth.uid;
+      allow update: if false;
+      allow delete: if false;
     }
 
     // Default deny for unknown collections
