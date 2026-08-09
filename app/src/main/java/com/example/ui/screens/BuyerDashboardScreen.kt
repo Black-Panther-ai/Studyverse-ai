@@ -27,7 +27,7 @@ import java.util.*
 fun BuyerDashboardScreen(
     viewModel: MainViewModel
 ) {
-    val myOrders by viewModel.syncedOrders.collectAsState()
+    val myOrders by viewModel.myOrders.collectAsState()
     val syncState by viewModel.dashboardSyncState.collectAsState()
     val myPayments by viewModel.myPayments.collectAsState()
     val currentUser by viewModel.currentUser.collectAsState()

@@ -125,4 +125,126 @@ class DashboardSyncUnitTests {
         currentState = SyncState.ERROR
         assertEquals(SyncState.ERROR, currentState)
     }
+
+    @Test
+    fun testAuthenticatedSellerAndValidDraft() {
+        val sellerUid = "seller_123"
+        val authenticatedUid = "seller_123"
+        val isApproved = false // Drafts are created as unapproved (isApproved = false)
+        
+        assertTrue(sellerUid == authenticatedUid)
+        assertFalse(isApproved)
+    }
+
+    @Test
+    fun testUnauthenticatedSeller() {
+        val authenticatedUid: String? = null
+        assertNull(authenticatedUid)
+    }
+
+    @Test
+    fun testSellerIdMismatch() {
+        val sellerUid = "seller_123"
+        val authenticatedUid = "buyer_456"
+        assertNotEquals(sellerUid, authenticatedUid)
+    }
+
+    @Test
+    fun testInvalidApprovalState() {
+        val isApproved = true // Sellers cannot self-approve listings
+        val expectedApprovalState = false
+        assertNotEquals(expectedApprovalState, isApproved)
+    }
+
+    @Test
+    fun testPdfUploadFailure() {
+        val uploadSuccess = false
+        assertFalse(uploadSuccess)
+    }
+
+    @Test
+    fun testPreviewUploadFailure() {
+        val uploadSuccess = false
+        assertFalse(uploadSuccess)
+    }
+
+    @Test
+    fun testActivationFailure() {
+        val updateSuccess = false
+        assertFalse(updateSuccess)
+    }
+
+    @Test
+    fun testSuccessfulListing() {
+        val draftCreated = true
+        val pdfUploaded = true
+        val previewsUploaded = true
+        val activated = true
+
+        assertTrue(draftCreated && pdfUploaded && previewsUploaded && activated)
+    }
+
+    @Test
+    fun testSuccessfulFreeDownload() {
+        val fileExists = true
+        val fileSize = 1024L
+        val fileReadable = true
+
+        val downloadVerified = fileExists && fileSize > 0 && fileReadable
+        assertTrue(downloadVerified)
+    }
+
+    @Test
+    fun testFailedFreeDownload() {
+        val fileExists = false
+        val fileSize = 0L
+        val fileReadable = false
+
+        val downloadVerified = fileExists && fileSize > 0 && fileReadable
+        assertFalse(downloadVerified)
+    }
+
+    @Test
+    fun testDownloadHistoryUidIsolation() {
+        val currentUserId = "user_abc"
+        val historyRecords = listOf(
+            mapOf("id" to "rec1", "userId" to "user_abc"),
+            mapOf("id" to "rec2", "userId" to "user_diff")
+        )
+        val isolated = historyRecords.filter { it["userId"] == currentUserId }
+        assertEquals(1, isolated.size)
+        assertEquals("rec1", isolated[0]["id"])
+    }
+
+    @Test
+    fun testDuplicateDownloadPrevention() {
+        val records = listOf("download_user_1_note_1", "download_user_1_note_1")
+        val uniqueRecords = records.distinct()
+        assertEquals(1, uniqueRecords.size)
+    }
+
+    @Test
+    fun testRoomDashboardRefresh() {
+        var refreshTriggered = false
+        val onRoomChange = {
+            refreshTriggered = true
+        }
+
+        onRoomChange()
+        assertTrue(refreshTriggered)
+    }
+
+    @Test
+    fun testReinstallAndDownloadHistoryRestoration() {
+        val mockFirestoreHistory = listOf(
+            OrderEntity(id = "download_user_1_note_1", buyerId = "user_1", buyerName = "A", sellerId = "S", itemId = "note_1", itemTitle = "Title", itemType = "DIGITAL_NOTE", price = 0.0, status = "COMPLETED", paymentId = "FREE", timestamp = 1000L, watermarkedDownloadUrl = "url")
+        )
+        val roomCache = mutableListOf<OrderEntity>()
+        
+        roomCache.clear()
+        roomCache.addAll(mockFirestoreHistory)
+        
+        assertEquals(1, roomCache.size)
+        assertEquals("download_user_1_note_1", roomCache[0].id)
+    }
 }

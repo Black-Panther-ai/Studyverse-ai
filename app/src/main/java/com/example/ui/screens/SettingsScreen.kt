@@ -138,7 +138,7 @@ fun SettingsScreen(
                         Text("Application Information", fontWeight = FontWeight.Bold, color = PrimaryBlue)
                         Spacer(modifier = Modifier.height(8.dp))
                         Text("App Name: StudySwap AI", fontSize = 12.sp)
-                        Text("Version: 2.4.0 Production Build", fontSize = 12.sp)
+                        Text("Version: 2.4.0 Production Build (STUDYVERSE_BUILD_DIAGNOSTIC = 2.4.1)", fontSize = 12.sp)
                         Text("Build Engine: Jetpack Compose + Room + Instamojo + Gemini AI", fontSize = 12.sp, color = Color.Gray)
                     }
                 }

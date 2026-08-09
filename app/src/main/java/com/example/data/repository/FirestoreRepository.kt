@@ -105,6 +105,7 @@ class FirestoreRepository {
                     // Fallback query without orderBy if index is building
                     firestore.collection("listings")
                         .whereEqualTo("status", "active")
+                        .whereEqualTo("isApproved", true)
                         .addSnapshotListener { snap2, err2 ->
                             if (snap2 != null) {
                                 val listings = snap2.documents.mapNotNull { doc ->
@@ -193,7 +194,7 @@ class FirestoreRepository {
                 "imageUrls" to listing.imageUrls,
                 "digitalFilePath" to listing.digitalFilePath,
                 "status" to listing.status,
-                "isApproved" to true,
+                "isApproved" to listing.isApproved,
                 "createdAt" to FieldValue.serverTimestamp(),
                 "updatedAt" to FieldValue.serverTimestamp()
             )

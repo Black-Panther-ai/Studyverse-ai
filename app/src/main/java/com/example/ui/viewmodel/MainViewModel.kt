@@ -16,6 +16,7 @@ import com.example.data.repository.RailwayStorageRepository
 import com.example.data.repository.RazorpayPaymentRepository
 import com.example.data.repository.StudySwapRepository
 import com.example.util.AndroidDownloadManagerHelper
+import com.example.util.ProductionDiagnostics
 import com.example.payment.InstamojoPaymentHelper
 import com.example.payment.InstamojoResult
 import com.google.firebase.FirebaseNetworkException
@@ -603,8 +604,10 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun downloadFreeNote(note: NoteEntity, context: Context? = null) {
+        ProductionDiagnostics.log("[DOWNLOAD] START (listingId: ${note.id})")
         val user = currentUser.value
         if (user == null) {
+            ProductionDiagnostics.logError("DOWNLOAD_AUTH_FAILED: User is not authenticated.")
             uiMessage.value = "Please sign in to download notes."
             return
         }
@@ -613,10 +616,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         val downloadId = "download_${user.id}_${note.id}"
         val timestamp = System.currentTimeMillis()
 
-        val onDownloadSuccess = {
+        val onDownloadSuccess = { file: java.io.File ->
+            ProductionDiagnostics.log("[DOWNLOAD] FILE_VERIFIED: SUCCESS (size: ${file.length()} bytes)")
             uiMessage.value = "Downloaded ${note.title} to Downloads folder!"
             
             // 1. Log download history to Firestore
+            ProductionDiagnostics.log("[DOWNLOAD] FIRESTORE_HISTORY: START")
             viewModelScope.launch {
                 try {
                     val db = FirebaseManager.firestore
@@ -631,14 +636,24 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                             "pdfUriOrUrl" to note.pdfUriOrUrl
                         )
                         db.collection("download_history").document(downloadId).set(downloadMap).await()
-                        Log.d("DownloadFree", "Successfully logged download history in Firestore: $downloadId")
+                        ProductionDiagnostics.log("[DOWNLOAD] FIRESTORE_HISTORY: SUCCESS")
                     }
                 } catch (e: Exception) {
-                    Log.e("DownloadFree", "Firestore log failed: ${e.message}")
+                    ProductionDiagnostics.logError("[DOWNLOAD] FIRESTORE_HISTORY: FAILURE (${e.message})", e)
+                    
+                    ProductionDiagnostics.setCustomKey("operation", "free_download_history_write")
+                    ProductionDiagnostics.setCustomKey("listingId", note.id)
+                    ProductionDiagnostics.setCustomKey("uid", user.id)
+                    ProductionDiagnostics.setCustomKey("downloadSource", note.pdfUriOrUrl)
+                    ProductionDiagnostics.setCustomKey("localFilePath", file.absolutePath)
+                    ProductionDiagnostics.setCustomKey("fileExists", file.exists())
+                    ProductionDiagnostics.setCustomKey("fileSize", file.length())
+                    ProductionDiagnostics.setCustomKey("exceptionType", e.javaClass.name)
                 }
             }
 
             // 2. Insert order entity in Room immediately for instant dashboard refresh
+            ProductionDiagnostics.log("[DOWNLOAD] ROOM_INSERT: START")
             viewModelScope.launch {
                 try {
                     val localOrder = OrderEntity(
@@ -656,10 +671,14 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                         watermarkedDownloadUrl = note.pdfUriOrUrl
                     )
                     repository.insertOrders(listOf(localOrder))
+                    ProductionDiagnostics.log("[DOWNLOAD] ROOM_INSERT: SUCCESS")
+                    
                     // Clean-sync cache with Firestore
+                    ProductionDiagnostics.log("[DOWNLOAD] DASHBOARD_REFRESH: START")
                     syncPurchasesFromFirestore()
+                    ProductionDiagnostics.log("[DOWNLOAD] DASHBOARD_REFRESH: SUCCESS")
                 } catch (roomEx: Exception) {
-                    Log.e("DownloadFree", "Room insert failed: ${roomEx.message}")
+                    ProductionDiagnostics.logError("[DOWNLOAD] ROOM_INSERT: FAILURE (${roomEx.message})", roomEx)
                 }
             }
         }
@@ -668,6 +687,8 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         if (context != null) {
             val downloadUrl = note.pdfUriOrUrl
             val fileName = "${note.title.replace(" ", "_")}.pdf"
+            ProductionDiagnostics.log("[DOWNLOAD] FILE_DOWNLOAD: START (url: $downloadUrl)")
+            
             if (downloadUrl.startsWith("http://") || downloadUrl.startsWith("https://")) {
                 com.example.util.AndroidDownloadManagerHelper.downloadPdfWithManager(
                     context = context,
@@ -675,9 +696,22 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     title = note.title,
                     fileName = fileName,
                     onComplete = { file ->
-                        if (file != null && file.exists()) {
-                            onDownloadSuccess()
+                        if (file != null && file.exists() && file.length() > 0 && file.canRead()) {
+                            onDownloadSuccess(file)
                         } else {
+                            val existStatus = file?.exists() ?: false
+                            val len = file?.length() ?: 0L
+                            val readStatus = file?.canRead() ?: false
+                            ProductionDiagnostics.logError("[DOWNLOAD] FILE_VERIFIED: FAILURE (exists: $existStatus, size: $len, readable: $readStatus)")
+                            
+                            ProductionDiagnostics.setCustomKey("operation", "free_download_file_verify")
+                            ProductionDiagnostics.setCustomKey("listingId", note.id)
+                            ProductionDiagnostics.setCustomKey("uid", user.id)
+                            ProductionDiagnostics.setCustomKey("downloadSource", downloadUrl)
+                            ProductionDiagnostics.setCustomKey("localFilePath", file?.absolutePath ?: "null")
+                            ProductionDiagnostics.setCustomKey("fileExists", existStatus)
+                            ProductionDiagnostics.setCustomKey("fileSize", len)
+                            
                             uiMessage.value = "Download failed for ${note.title}."
                         }
                     }
@@ -690,9 +724,22 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     orderId = "FREE_${timestamp.toString().takeLast(6)}",
                     authorName = note.authorName
                 )
-                if (pdfFile != null && pdfFile.exists()) {
-                    onDownloadSuccess()
+                if (pdfFile != null && pdfFile.exists() && pdfFile.length() > 0 && pdfFile.canRead()) {
+                    onDownloadSuccess(pdfFile)
                 } else {
+                    val existStatus = pdfFile?.exists() ?: false
+                    val len = pdfFile?.length() ?: 0L
+                    val readStatus = pdfFile?.canRead() ?: false
+                    ProductionDiagnostics.logError("[DOWNLOAD] FILE_VERIFIED: FAILURE (exists: $existStatus, size: $len, readable: $readStatus)")
+                    
+                    ProductionDiagnostics.setCustomKey("operation", "free_download_file_verify")
+                    ProductionDiagnostics.setCustomKey("listingId", note.id)
+                    ProductionDiagnostics.setCustomKey("uid", user.id)
+                    ProductionDiagnostics.setCustomKey("downloadSource", "mock_pdf_generation")
+                    ProductionDiagnostics.setCustomKey("localFilePath", pdfFile?.absolutePath ?: "null")
+                    ProductionDiagnostics.setCustomKey("fileExists", existStatus)
+                    ProductionDiagnostics.setCustomKey("fileSize", len)
+                    
                     uiMessage.value = "Download failed for ${note.title}."
                 }
             }
@@ -912,7 +959,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 city = city.ifEmpty { "New Delhi" },
                 imageUrls = finalPhotoUrls,
                 status = "active",
-                isApproved = true
+                isApproved = false
             )
 
             val createResult = repository.firestoreRepository.createListing(listing)
@@ -980,11 +1027,16 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         previewImagesList: List<String>,
         copyrightDeclared: Boolean
     ) {
+        ProductionDiagnostics.log("[LISTING] START")
+        ProductionDiagnostics.log("[LISTING] AUTH_CHECK: START")
         val user = currentUser.value
         if (user == null) {
-            uiMessage.value = "Please sign in to upload notes."
+            ProductionDiagnostics.logError("LISTING_AUTH_FAILED: User is not authenticated.")
+            ProductionDiagnostics.setCustomKey("operation", "listing_auth")
+            uiMessage.value = "Upload failed. Please try again."
             return
         }
+        ProductionDiagnostics.log("[LISTING] AUTH_CHECK: SUCCESS")
 
         if (!copyrightDeclared) {
             uiMessage.value = "Mandatory: You must declare copyright ownership!"
@@ -1000,12 +1052,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             isUploading.value = true
             uploadProgress.value = 0.1f
             uploadStatusText.value = "Initializing note draft..."
-            Log.d("NoteUpload", "Starting note upload process for user: ${user.id}, title: '$title'")
 
             val tempId = "note_${System.currentTimeMillis()}"
             val pricePaise = if (isFree) 0L else Listing.rupeesToPaise(price)
 
-            // 1. Create draft listing in Firestore so Railway backend authorization check passes
+            // 1. Create draft listing in Firestore (isApproved = false as per contract)
             val draftListing = Listing(
                 id = tempId,
                 sellerId = user.id,
@@ -1022,27 +1073,45 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 imageUrls = emptyList(),
                 digitalFilePath = "",
                 status = "draft",
-                isApproved = true
+                isApproved = false
             )
 
+            ProductionDiagnostics.log("[LISTING] LISTING_DRAFT_CREATE: START (id: $tempId)")
             val draftResult = repository.firestoreRepository.createListing(draftListing)
             if (draftResult.isFailure) {
                 isUploading.value = false
                 val err = draftResult.exceptionOrNull()?.message ?: "Failed to initialize listing draft."
-                Log.e("NoteUpload", "Draft creation failed: $err")
-                uiMessage.value = "Upload Failed: $err"
+                
+                val diagnosticCode = if (err.contains("LISTING_SELLER_PROFILE_UPDATE_FAILED")) {
+                    "LISTING_SELLER_PROFILE_UPDATE_FAILED"
+                } else {
+                    "LISTING_FIRESTORE_CREATE_FAILED"
+                }
+                
+                ProductionDiagnostics.logError("[LISTING] $diagnosticCode: FAILURE ($err)")
+                
+                ProductionDiagnostics.setCustomKey("operation", "listing_draft_create")
+                ProductionDiagnostics.setCustomKey("listingId", tempId)
+                ProductionDiagnostics.setCustomKey("uid", user.id)
+                ProductionDiagnostics.setCustomKey("exceptionType", draftResult.exceptionOrNull()?.javaClass?.name ?: "Unknown")
+                ProductionDiagnostics.setCustomKey("firebaseErrorCode", err)
+
+                uiMessage.value = "Upload failed. Please try again. ($diagnosticCode)"
                 return@launch
             }
+            ProductionDiagnostics.log("[LISTING] LISTING_DRAFT_CREATE: SUCCESS")
+            ProductionDiagnostics.log("[LISTING] SELLER_PROFILE_UPDATE: SUCCESS")
 
             var digitalFilePath = ""
             try {
                 if (pdfUri.startsWith("content://") || pdfUri.startsWith("file://")) {
+                    ProductionDiagnostics.log("[LISTING] PDF_UPLOAD: START")
                     val uri = Uri.parse(pdfUri)
                     val (fileSize, _) = getFileInfoFromUri(context, uri)
                     val safeSize = if (fileSize > 0) fileSize else 1024L * 1024L
 
-                    uploadStatusText.value = "Requesting S3 upload URL from Railway backend..."
-                    Log.d("NoteUpload", "Sending POST /api/v1/storage/presign-upload for listing $tempId, size: $safeSize bytes")
+                    ProductionDiagnostics.log("[LISTING] STORAGE_PROVIDER: Railway S3")
+                    ProductionDiagnostics.log("[LISTING] STORAGE_PATH: digital-files/${user.id}/$tempId/...")
 
                     val presignedResponse = railwayStorageRepository.requestPresignedUploadUrl(
                         listingId = tempId,
@@ -1050,10 +1119,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                         contentType = "application/pdf",
                         fileSizeBytes = safeSize
                     )
-
-                    uploadStatusText.value = "Uploading $pdfFileName to Railway S3 storage..."
-                    uploadProgress.value = 0.4f
-                    Log.d("NoteUpload", "Uploading PDF bytes directly to S3: ${presignedResponse.objectKey}")
 
                     val inputStream = context.contentResolver.openInputStream(uri)
                         ?: throw IllegalStateException("Could not open input stream for PDF file.")
@@ -1072,24 +1137,29 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     }
 
                     digitalFilePath = presignedResponse.objectKey
-                    Log.d("NoteUpload", "PDF successfully uploaded to S3. Object key: $digitalFilePath")
-                    uploadProgress.value = 0.7f
+                    ProductionDiagnostics.log("[LISTING] PDF_UPLOAD: SUCCESS (objectKey: $digitalFilePath)")
                 } else {
                     digitalFilePath = pdfUri
                 }
             } catch (e: Exception) {
-                Log.e("NoteUpload", "Digital PDF upload exception: ${e.message}", e)
+                ProductionDiagnostics.logError("[LISTING] LISTING_PDF_UPLOAD_FAILED: FAILURE (${e.message})", e)
+                
+                ProductionDiagnostics.setCustomKey("operation", "listing_pdf_upload")
+                ProductionDiagnostics.setCustomKey("listingId", tempId)
+                ProductionDiagnostics.setCustomKey("uid", user.id)
+                ProductionDiagnostics.setCustomKey("exceptionType", e.javaClass.name)
+
                 try {
                     val db = FirebaseManager.firestore
                     if (db != null) {
                         db.collection("listings").document(tempId).delete().await()
-                        Log.d("NoteUpload", "Successfully rolled back/deleted draft listing: $tempId")
+                        ProductionDiagnostics.log("[LISTING] Draft document rollback completed.")
                     }
                 } catch (rollbackEx: Exception) {
-                    Log.e("NoteUpload", "Failed to delete draft listing: ${rollbackEx.message}")
+                    ProductionDiagnostics.logError("Rollback failed: ${rollbackEx.message}", rollbackEx)
                 }
                 isUploading.value = false
-                uiMessage.value = "Upload Failed: LISTING_STORAGE_PDF_UPLOAD_FAILED: ${e.localizedMessage ?: e.message}"
+                uiMessage.value = "Upload failed. Please try again. (LISTING_PDF_UPLOAD_FAILED)"
                 return@launch
             }
 
@@ -1097,7 +1167,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             val uploadedImageKeys = mutableListOf<String>()
             val localPreviewUris = previewImagesList.filter { it.startsWith("content://") || it.startsWith("file://") }
             if (localPreviewUris.isNotEmpty()) {
-                uploadStatusText.value = "Uploading preview photos to Railway S3..."
+                ProductionDiagnostics.log("[LISTING] PREVIEW_IMAGE_UPLOAD: START")
                 localPreviewUris.forEachIndexed { idx, uriString ->
                     try {
                         val uri = Uri.parse(uriString)
@@ -1116,13 +1186,20 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                                 contentType = "image/jpeg",
                                 contentLength = safeImgSize
                             )
-                            if (success) uploadedImageKeys.add(presignedImg.objectKey)
+                            if (success) {
+                                uploadedImageKeys.add(presignedImg.objectKey)
+                            } else {
+                                throw IllegalStateException("S3 PUT upload failed for image index $idx")
+                            }
                         }
                     } catch (e: Exception) {
-                        Log.e("NoteUpload", "Sample photo upload failed for index $idx: ${e.message}")
+                        ProductionDiagnostics.logError("[LISTING] LISTING_PREVIEW_UPLOAD_FAILED: FAILURE for index $idx (${e.message})", e)
+                        ProductionDiagnostics.setCustomKey("operation", "listing_preview_upload")
+                        ProductionDiagnostics.setCustomKey("listingId", tempId)
+                        ProductionDiagnostics.setCustomKey("uid", user.id)
                     }
-                    uploadProgress.value = 0.7f + (0.2f * (idx + 1) / localPreviewUris.size)
                 }
+                ProductionDiagnostics.log("[LISTING] PREVIEW_IMAGE_UPLOAD: SUCCESS (${uploadedImageKeys.size}/${localPreviewUris.size} uploaded)")
             }
 
             val webPreviews = previewImagesList.filter { !it.startsWith("content://") && !it.startsWith("file://") && it.isNotBlank() }
@@ -1130,14 +1207,35 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 listOf("https://images.unsplash.com/photo-1544716278-ca5e3f4abd8c?w=500")
             }
 
-            // 3. Update draft listing in Firestore to active status with object keys
+            // 3. Storage Verification
+            ProductionDiagnostics.log("[LISTING] STORAGE_VERIFICATION: START")
+            if (digitalFilePath.isBlank()) {
+                ProductionDiagnostics.logError("[LISTING] LISTING_STORAGE_VERIFY_FAILED: FAILURE (digitalFilePath is blank)")
+                ProductionDiagnostics.setCustomKey("operation", "listing_storage_verify")
+                ProductionDiagnostics.setCustomKey("listingId", tempId)
+                ProductionDiagnostics.setCustomKey("uid", user.id)
+
+                try {
+                    val db = FirebaseManager.firestore
+                    if (db != null) {
+                        db.collection("listings").document(tempId).delete().await()
+                    }
+                } catch (ex: Exception) {}
+                isUploading.value = false
+                uiMessage.value = "Upload failed. Please try again. (LISTING_STORAGE_VERIFY_FAILED)"
+                return@launch
+            }
+            ProductionDiagnostics.log("[LISTING] STORAGE_VERIFICATION: SUCCESS")
+
+            // 4. Update draft listing in Firestore to active status (keeps isApproved = false)
             val finalListing = draftListing.copy(
                 imageUrls = finalPreviewUrls,
                 digitalFilePath = digitalFilePath,
                 status = "active",
-                isApproved = true
+                isApproved = false
             )
 
+            ProductionDiagnostics.log("[LISTING] LISTING_ACTIVATION: START")
             val updateResult = repository.firestoreRepository.updateListing(finalListing)
             if (updateResult.isSuccess) {
                 val note = NoteEntity(
@@ -1161,21 +1259,25 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 isUploading.value = false
                 uploadStatusText.value = "Note published successfully!"
                 uiMessage.value = "Digital Note published to StudySwap Marketplace!"
-                Log.d("NoteUpload", "Note published successfully with object key: $digitalFilePath")
+                ProductionDiagnostics.log("[LISTING] LISTING_ACTIVATION: SUCCESS")
+                ProductionDiagnostics.log("[LISTING] SUCCESS (listingId: $tempId)")
             } else {
+                val err = updateResult.exceptionOrNull()?.message ?: "Failed to activate listing."
+                ProductionDiagnostics.logError("[LISTING] LISTING_ACTIVATION_FAILED: FAILURE ($err)")
+                
+                ProductionDiagnostics.setCustomKey("operation", "listing_activation")
+                ProductionDiagnostics.setCustomKey("listingId", tempId)
+                ProductionDiagnostics.setCustomKey("uid", user.id)
+                ProductionDiagnostics.setCustomKey("exceptionType", updateResult.exceptionOrNull()?.javaClass?.name ?: "Unknown")
+
                 try {
                     val db = FirebaseManager.firestore
                     if (db != null) {
                         db.collection("listings").document(tempId).delete().await()
-                        Log.d("NoteUpload", "Successfully rolled back/deleted draft listing: $tempId")
                     }
-                } catch (rollbackEx: Exception) {
-                    Log.e("NoteUpload", "Failed to delete draft listing: ${rollbackEx.message}")
-                }
+                } catch (rollbackEx: Exception) {}
                 isUploading.value = false
-                val err = updateResult.exceptionOrNull()?.message ?: "Failed to activate listing."
-                Log.e("NoteUpload", "Failed to update listing status: $err")
-                uiMessage.value = "Upload Failed: LISTING_FIRESTORE_CREATE_FAILED: $err"
+                uiMessage.value = "Upload failed. Please try again. (LISTING_ACTIVATION_FAILED)"
             }
         }
     }

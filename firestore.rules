@@ -26,11 +26,11 @@ service cloud.firestore {
 
     // 2. Marketplace Listings collection
     match /listings/{listingId} {
-      allow read: if resource.data.status == 'active' || (isAuthenticated() && request.auth.uid == resource.data.sellerId);
+      allow read: if (resource.data.status == 'active' && resource.data.isApproved == true) || (isAuthenticated() && request.auth.uid == resource.data.sellerId);
 
       allow create: if isAuthenticated()
                     && request.resource.data.sellerId == request.auth.uid
-                    && request.resource.data.isApproved == true;
+                    && request.resource.data.isApproved == false;
 
       allow update: if isAuthenticated()
                     && resource.data.sellerId == request.auth.uid
