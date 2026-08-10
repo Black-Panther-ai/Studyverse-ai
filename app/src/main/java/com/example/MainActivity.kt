@@ -380,7 +380,8 @@ fun MainAppContent(
                         )
                         AppTab.SETTINGS, AppTab.NOTIFICATIONS -> SettingsScreen(
                             isDarkTheme = isDarkTheme,
-                            onDarkThemeToggle = onDarkThemeToggle
+                            onDarkThemeToggle = onDarkThemeToggle,
+                            viewModel = viewModel
                         )
                         AppTab.HELP_SUPPORT -> HelpSupportScreen()
                         AppTab.PRIVACY_POLICY -> PrivacyPolicyScreen()

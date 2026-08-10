@@ -14,12 +14,14 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.example.ui.theme.PrimaryBlue
+import com.example.ui.viewmodel.MainViewModel
 
 @Composable
 fun SettingsScreen(
     isDarkTheme: Boolean = true,
     onDarkThemeToggle: () -> Unit = {},
-    onBack: () -> Unit = {}
+    onBack: () -> Unit = {},
+    viewModel: MainViewModel? = null
 ) {
     var notificationsEnabled by remember { mutableStateOf(true) }
     var emailAlertsEnabled by remember { mutableStateOf(true) }
@@ -140,6 +142,42 @@ fun SettingsScreen(
                         Text("App Name: StudySwap AI", fontSize = 12.sp)
                         Text("Version: 2.4.0 Production Build (STUDYVERSE_BUILD_DIAGNOSTIC = 2.4.1)", fontSize = 12.sp)
                         Text("Build Engine: Jetpack Compose + Room + Instamojo + Gemini AI", fontSize = 12.sp, color = Color.Gray)
+                    }
+                }
+
+                if (viewModel != null) {
+                    Spacer(modifier = Modifier.height(16.dp))
+
+                    Card(
+                        modifier = Modifier.fillMaxWidth().testTag("developer_diagnostics_card"),
+                        colors = CardDefaults.cardColors(containerColor = MaterialTheme.colorScheme.secondaryContainer)
+                    ) {
+                        Column(modifier = Modifier.padding(16.dp)) {
+                            Text("Developer Firebase Diagnostics", fontWeight = FontWeight.Bold, color = MaterialTheme.colorScheme.onSecondaryContainer)
+                            Spacer(modifier = Modifier.height(8.dp))
+                            
+                            var diagnosticOutput by remember { mutableStateOf("") }
+                            var isTesting by remember { mutableStateOf(false) }
+
+                            if (diagnosticOutput.isNotEmpty()) {
+                                Text(diagnosticOutput, fontSize = 11.sp, color = MaterialTheme.colorScheme.onSecondaryContainer)
+                                Spacer(modifier = Modifier.height(8.dp))
+                            }
+
+                            Button(
+                                onClick = {
+                                    isTesting = true
+                                    viewModel.runFirebaseDiagnostics { result ->
+                                        diagnosticOutput = result
+                                        isTesting = false
+                                    }
+                                },
+                                enabled = !isTesting,
+                                modifier = Modifier.fillMaxWidth().testTag("run_diagnostics_button")
+                            ) {
+                                Text(if (isTesting) "Running Diagnostics..." else "Run Firebase Diagnostics")
+                            }
+                        }
                     }
                 }
             }

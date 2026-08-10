@@ -604,8 +604,24 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun downloadFreeNote(note: NoteEntity, context: Context? = null) {
-        ProductionDiagnostics.log("[DOWNLOAD] START (listingId: ${note.id})")
         val user = currentUser.value
+        Log.d("DOWNLOAD_FORENSIC", "[DOWNLOAD_FORENSIC] START")
+        Log.d("DOWNLOAD_FORENSIC", "[DOWNLOAD_FORENSIC] listingId=${note.id}")
+        Log.d("DOWNLOAD_FORENSIC", "[DOWNLOAD_FORENSIC] authenticatedUid=${user?.id ?: "null"}")
+        
+        val url = note.pdfUriOrUrl
+        val urlType = if (url.startsWith("http://") || url.startsWith("https://")) {
+            "http_url"
+        } else if (url.startsWith("content://") || url.startsWith("file://")) {
+            "local_uri"
+        } else if (url.isBlank()) {
+            "blank"
+        } else {
+            "s3_object_key"
+        }
+        Log.d("DOWNLOAD_FORENSIC", "[DOWNLOAD_FORENSIC] source type=$urlType")
+        Log.d("DOWNLOAD_FORENSIC", "[DOWNLOAD_FORENSIC] download URL/path type=$urlType")
+
         if (user == null) {
             ProductionDiagnostics.logError("DOWNLOAD_AUTH_FAILED: User is not authenticated.")
             uiMessage.value = "Please sign in to download notes."
@@ -617,11 +633,16 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         val timestamp = System.currentTimeMillis()
 
         val onDownloadSuccess = { file: java.io.File ->
-            ProductionDiagnostics.log("[DOWNLOAD] FILE_VERIFIED: SUCCESS (size: ${file.length()} bytes)")
+            Log.d("DOWNLOAD_FORENSIC", "[DOWNLOAD_FORENSIC] local file path=${file.absolutePath}")
+            Log.d("DOWNLOAD_FORENSIC", "[DOWNLOAD_FORENSIC] fileExists=${file.exists()}")
+            Log.d("DOWNLOAD_FORENSIC", "[DOWNLOAD_FORENSIC] fileSize=${file.length()}")
+            Log.d("DOWNLOAD_FORENSIC", "[DOWNLOAD_FORENSIC] canRead=${file.canRead()}")
+            
+            Log.d("DOWNLOAD_FORENSIC", "[DOWNLOAD_FORENSIC] FILE_VERIFIED")
             uiMessage.value = "Downloaded ${note.title} to Downloads folder!"
             
             // 1. Log download history to Firestore
-            ProductionDiagnostics.log("[DOWNLOAD] FIRESTORE_HISTORY: START")
+            Log.d("DOWNLOAD_FORENSIC", "[DOWNLOAD_FORENSIC] HISTORY_WRITE_START")
             viewModelScope.launch {
                 try {
                     val db = FirebaseManager.firestore
@@ -636,24 +657,25 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                             "pdfUriOrUrl" to note.pdfUriOrUrl
                         )
                         db.collection("download_history").document(downloadId).set(downloadMap).await()
-                        ProductionDiagnostics.log("[DOWNLOAD] FIRESTORE_HISTORY: SUCCESS")
+                        Log.d("DOWNLOAD_FORENSIC", "[DOWNLOAD_FORENSIC] HISTORY_WRITE_SUCCESS")
+                    } else {
+                        Log.e("DOWNLOAD_FORENSIC", "[DOWNLOAD_FORENSIC] HISTORY_WRITE_FAILED")
+                        Log.e("DOWNLOAD_FORENSIC", "[DOWNLOAD_FORENSIC] exceptionMessage=Firestore is null")
                     }
                 } catch (e: Exception) {
-                    ProductionDiagnostics.logError("[DOWNLOAD] FIRESTORE_HISTORY: FAILURE (${e.message})", e)
-                    
-                    ProductionDiagnostics.setCustomKey("operation", "free_download_history_write")
-                    ProductionDiagnostics.setCustomKey("listingId", note.id)
-                    ProductionDiagnostics.setCustomKey("uid", user.id)
-                    ProductionDiagnostics.setCustomKey("downloadSource", note.pdfUriOrUrl)
-                    ProductionDiagnostics.setCustomKey("localFilePath", file.absolutePath)
-                    ProductionDiagnostics.setCustomKey("fileExists", file.exists())
-                    ProductionDiagnostics.setCustomKey("fileSize", file.length())
-                    ProductionDiagnostics.setCustomKey("exceptionType", e.javaClass.name)
+                    val firestoreCode = if (e is com.google.firebase.firestore.FirebaseFirestoreException) {
+                        e.code.name
+                    } else {
+                        "NONE"
+                    }
+                    Log.e("DOWNLOAD_FORENSIC", "[DOWNLOAD_FORENSIC] HISTORY_WRITE_FAILED")
+                    Log.e("DOWNLOAD_FORENSIC", "[DOWNLOAD_FORENSIC] firestoreCode=$firestoreCode")
+                    Log.e("DOWNLOAD_FORENSIC", "[DOWNLOAD_FORENSIC] exceptionMessage=${e.message}")
                 }
             }
 
             // 2. Insert order entity in Room immediately for instant dashboard refresh
-            ProductionDiagnostics.log("[DOWNLOAD] ROOM_INSERT: START")
+            Log.d("DOWNLOAD_FORENSIC", "[DOWNLOAD_FORENSIC] ROOM_INSERT_START")
             viewModelScope.launch {
                 try {
                     val localOrder = OrderEntity(
@@ -671,14 +693,12 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                         watermarkedDownloadUrl = note.pdfUriOrUrl
                     )
                     repository.insertOrders(listOf(localOrder))
-                    ProductionDiagnostics.log("[DOWNLOAD] ROOM_INSERT: SUCCESS")
+                    Log.d("DOWNLOAD_FORENSIC", "[DOWNLOAD_FORENSIC] ROOM_INSERT_SUCCESS")
                     
                     // Clean-sync cache with Firestore
-                    ProductionDiagnostics.log("[DOWNLOAD] DASHBOARD_REFRESH: START")
                     syncPurchasesFromFirestore()
-                    ProductionDiagnostics.log("[DOWNLOAD] DASHBOARD_REFRESH: SUCCESS")
                 } catch (roomEx: Exception) {
-                    ProductionDiagnostics.logError("[DOWNLOAD] ROOM_INSERT: FAILURE (${roomEx.message})", roomEx)
+                    Log.e("DOWNLOAD_FORENSIC", "Room insert failed: ${roomEx.message}")
                 }
             }
         }
@@ -687,7 +707,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
         if (context != null) {
             val downloadUrl = note.pdfUriOrUrl
             val fileName = "${note.title.replace(" ", "_")}.pdf"
-            ProductionDiagnostics.log("[DOWNLOAD] FILE_DOWNLOAD: START (url: $downloadUrl)")
             
             if (downloadUrl.startsWith("http://") || downloadUrl.startsWith("https://")) {
                 com.example.util.AndroidDownloadManagerHelper.downloadPdfWithManager(
@@ -696,22 +715,16 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     title = note.title,
                     fileName = fileName,
                     onComplete = { file ->
+                        val resultText = if (file != null && file.exists()) "SUCCESS" else "FAILURE"
+                        Log.d("DOWNLOAD_FORENSIC", "[DOWNLOAD_FORENSIC] HTTP/storage result=$resultText")
+                        
                         if (file != null && file.exists() && file.length() > 0 && file.canRead()) {
                             onDownloadSuccess(file)
                         } else {
                             val existStatus = file?.exists() ?: false
                             val len = file?.length() ?: 0L
                             val readStatus = file?.canRead() ?: false
-                            ProductionDiagnostics.logError("[DOWNLOAD] FILE_VERIFIED: FAILURE (exists: $existStatus, size: $len, readable: $readStatus)")
-                            
-                            ProductionDiagnostics.setCustomKey("operation", "free_download_file_verify")
-                            ProductionDiagnostics.setCustomKey("listingId", note.id)
-                            ProductionDiagnostics.setCustomKey("uid", user.id)
-                            ProductionDiagnostics.setCustomKey("downloadSource", downloadUrl)
-                            ProductionDiagnostics.setCustomKey("localFilePath", file?.absolutePath ?: "null")
-                            ProductionDiagnostics.setCustomKey("fileExists", existStatus)
-                            ProductionDiagnostics.setCustomKey("fileSize", len)
-                            
+                            Log.e("DOWNLOAD_FORENSIC", "[DOWNLOAD_FORENSIC] FILE_VERIFIED_FAILED: exists=$existStatus, size=$len, readable=$readStatus")
                             uiMessage.value = "Download failed for ${note.title}."
                         }
                     }
@@ -730,16 +743,7 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     val existStatus = pdfFile?.exists() ?: false
                     val len = pdfFile?.length() ?: 0L
                     val readStatus = pdfFile?.canRead() ?: false
-                    ProductionDiagnostics.logError("[DOWNLOAD] FILE_VERIFIED: FAILURE (exists: $existStatus, size: $len, readable: $readStatus)")
-                    
-                    ProductionDiagnostics.setCustomKey("operation", "free_download_file_verify")
-                    ProductionDiagnostics.setCustomKey("listingId", note.id)
-                    ProductionDiagnostics.setCustomKey("uid", user.id)
-                    ProductionDiagnostics.setCustomKey("downloadSource", "mock_pdf_generation")
-                    ProductionDiagnostics.setCustomKey("localFilePath", pdfFile?.absolutePath ?: "null")
-                    ProductionDiagnostics.setCustomKey("fileExists", existStatus)
-                    ProductionDiagnostics.setCustomKey("fileSize", len)
-                    
+                    Log.e("DOWNLOAD_FORENSIC", "[DOWNLOAD_FORENSIC] FILE_VERIFIED_FAILED: exists=$existStatus, size=$len, readable=$readStatus")
                     uiMessage.value = "Download failed for ${note.title}."
                 }
             }
@@ -1551,4 +1555,72 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun sendAiPrompt() {
         executeAiAssistantTool(aiPromptInput.value, activeAiTool.value)
     }
+
+    fun runFirebaseDiagnostics(onResult: (String) -> Unit) {
+        viewModelScope.launch {
+            val sb = java.lang.StringBuilder()
+            sb.append("--- FIREBASE DIAGNOSTICS STARTED ---\n")
+            try {
+                // A. FirebaseApp initialization
+                val app = com.google.firebase.FirebaseApp.getInstance()
+                sb.append("A. FirebaseApp initialized: SUCCESS\n")
+                sb.append("   App Name: ${app.name}\n")
+                
+                // B. Firebase project ID
+                val projId = app.options.projectId
+                sb.append("B. Firebase Project ID: $projId\n")
+                
+                // C. FirebaseAuth current user
+                val auth = com.google.firebase.auth.FirebaseAuth.getInstance()
+                val user = auth.currentUser
+                if (user == null) {
+                    sb.append("C. FirebaseAuth Current User: NONE (Not Authenticated)\n")
+                } else {
+                    sb.append("C. FirebaseAuth Current User: SUCCESS\n")
+                    sb.append("   User UID: ${user.uid}\n")
+                    sb.append("   Is Anonymous: ${user.isAnonymous}\n")
+                    
+                    // D. Firestore connectivity
+                    val db = FirebaseManager.firestore
+                    if (db == null) {
+                        sb.append("D. Firestore Instance: FAILED (db is null)\n")
+                    } else {
+                        sb.append("D. Firestore Connectivity: INITIALIZED\n")
+                        
+                        // E. Firestore create permission
+                        val docId = "diag_${System.currentTimeMillis()}"
+                        val diagRef = db.collection("diagnostics").document(user.uid)
+                            .collection("firestore_test").document(docId)
+                        val data = mapOf(
+                            "testedAt" to com.google.firebase.firestore.FieldValue.serverTimestamp(),
+                            "status" to "success"
+                        )
+                        
+                        sb.append("E. Firestore Write to ${diagRef.path}: START\n")
+                        try {
+                            diagRef.set(data).await()
+                            sb.append("   Firestore Write: SUCCESS\n")
+                            
+                            // F. Firestore delete/cleanup
+                            sb.append("F. Firestore Delete: START\n")
+                            diagRef.delete().await()
+                            sb.append("   Firestore Delete: SUCCESS\n")
+                        } catch (e: com.google.firebase.firestore.FirebaseFirestoreException) {
+                            sb.append("   Firestore Error Code: ${e.code}\n")
+                            sb.append("   Firestore Error Message: ${e.message}\n")
+                            Log.e("FORENSIC_DIAG", "Firestore diagnostics error", e)
+                        } catch (e: Exception) {
+                            sb.append("   General Error: ${e.message}\n")
+                            Log.e("FORENSIC_DIAG", "Diagnostics write error", e)
+                        }
+                    }
+                }
+            } catch (e: Exception) {
+                sb.append("General diagnostics failure: ${e.message}\n")
+            }
+            sb.append("--- FIREBASE DIAGNOSTICS END ---")
+            onResult(sb.toString())
+        }
+    }
 }
+

@@ -70,6 +70,11 @@ service cloud.firestore {
       allow delete: if false;
     }
 
+    // 7. Developer diagnostics connectivity tests
+    match /diagnostics/{userId} {
+      allow read, write: if isOwner(userId);
+    }
+
     // Default deny for unknown collections
     match /{document=**} {
       allow read, write: if false;

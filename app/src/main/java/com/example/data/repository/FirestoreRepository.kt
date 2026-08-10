@@ -8,6 +8,8 @@ import com.example.data.model.Listing
 import com.example.data.model.UserProfile
 import com.google.firebase.firestore.FieldValue
 import com.google.firebase.firestore.Query
+import com.google.firebase.firestore.FirebaseFirestoreException
+import com.google.firebase.crashlytics.FirebaseCrashlytics
 import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.callbackFlow
@@ -163,23 +165,47 @@ class FirestoreRepository {
     }
 
     suspend fun createListing(listing: Listing): Result<String> {
-        val firestore = FirebaseManager.firestore ?: return Result.failure(Exception("Firestore unavailable"))
         val auth = FirebaseManager.auth ?: return Result.failure(Exception("Auth unavailable"))
-        val currentUser = auth.currentUser ?: return Result.failure(Exception("Not authenticated"))
-
-        if (listing.sellerId != currentUser.uid) {
-            return Result.failure(Exception("Unauthorized listing creation"))
+        val currentUser = auth.currentUser
+        if (currentUser == null) {
+            Log.e("LISTING_FORENSIC", "[LISTING_FORENSIC] auth user exists: false")
+            throw Exception("LISTING_AUTH_USER_MISSING")
         }
 
+        Log.d("LISTING_FORENSIC", "[LISTING_FORENSIC] auth user exists: true")
+        Log.d("LISTING_FORENSIC", "[LISTING_FORENSIC] authUid: ${currentUser.uid}")
+        Log.d("LISTING_FORENSIC", "[LISTING_FORENSIC] isAnonymous: ${currentUser.isAnonymous}")
+        Log.d("LISTING_FORENSIC", "[LISTING_FORENSIC] email presence: ${!currentUser.email.isNullOrBlank()}")
+
+        // Assertions
+        if (listing.id.isBlank()) {
+            val errMsg = "Assertion failed: listing.id is blank"
+            Log.e("LISTING_FORENSIC", errMsg)
+            throw IllegalArgumentException(errMsg)
+        }
+        if (listing.sellerId != currentUser.uid) {
+            val errMsg = "Assertion failed: listing.sellerId (${listing.sellerId}) != currentUser.uid (${currentUser.uid})"
+            Log.e("LISTING_FORENSIC", errMsg)
+            throw IllegalArgumentException(errMsg)
+        }
+        if (listing.isApproved) {
+            val errMsg = "Assertion failed: listing.isApproved is true, expected false"
+            Log.e("LISTING_FORENSIC", errMsg)
+            throw IllegalArgumentException(errMsg)
+        }
+
+        val firestore = FirebaseManager.firestore ?: return Result.failure(Exception("Firestore unavailable"))
+        val docRef = firestore.collection("listings").document(listing.id)
+        val exactPath = docRef.path
+
         return try {
-            val docRef = if (listing.id.isNotBlank()) {
-                firestore.collection("listings").document(listing.id)
-            } else {
-                firestore.collection("listings").document()
-            }
-            val listingId = docRef.id
+            val app = com.google.firebase.FirebaseApp.getInstance()
+            val projectId = app.options.projectId ?: "unknown"
+            val applicationId = app.options.applicationId ?: "unknown"
+            val appName = app.name
+
             val listingMap = mapOf(
-                "id" to listingId,
+                "id" to listing.id,
                 "sellerId" to currentUser.uid,
                 "sellerDisplayName" to listing.sellerDisplayName,
                 "categoryId" to listing.categoryId,
@@ -199,11 +225,47 @@ class FirestoreRepository {
                 "updatedAt" to FieldValue.serverTimestamp()
             )
 
+            Log.d("LISTING_FORENSIC", "[LISTING_FORENSIC] FIRESTORE_CREATE_START")
+            Log.d("LISTING_FORENSIC", "[LISTING_FORENSIC] projectId=$projectId")
+            Log.d("LISTING_FORENSIC", "[LISTING_FORENSIC] applicationId=$applicationId")
+            Log.d("LISTING_FORENSIC", "[LISTING_FORENSIC] authUid=${currentUser.uid}")
+            Log.d("LISTING_FORENSIC", "[LISTING_FORENSIC] sellerId=${listing.sellerId}")
+            Log.d("LISTING_FORENSIC", "[LISTING_FORENSIC] documentId=${listing.id}")
+            Log.d("LISTING_FORENSIC", "[LISTING_FORENSIC] isApproved=${listing.isApproved}")
+            Log.d("LISTING_FORENSIC", "[LISTING_FORENSIC] path=/$exactPath")
+            Log.d("LISTING_FORENSIC", "[LISTING_FORENSIC] fieldNames=${listingMap.keys.joinToString(", ")}")
+
             try {
                 docRef.set(listingMap).await()
             } catch (e: Exception) {
-                Log.e(TAG, "Failed to write listing document: ${e.message}")
-                return Result.failure(Exception("LISTING_FIRESTORE_CREATE_FAILED: ${e.localizedMessage ?: e.message}"))
+                Log.e("LISTING_FORENSIC", "[LISTING_FORENSIC] FIRESTORE_CREATE_FAILED")
+                Log.e("LISTING_FORENSIC", "[LISTING_FORENSIC] exceptionClass=${e.javaClass.name}")
+                val firestoreCode = if (e is FirebaseFirestoreException) {
+                    e.code.name
+                } else {
+                    "NONE"
+                }
+                Log.e("LISTING_FORENSIC", "[LISTING_FORENSIC] firestoreCode=$firestoreCode")
+                Log.e("LISTING_FORENSIC", "[LISTING_FORENSIC] message=${e.message}")
+                Log.e("LISTING_FORENSIC", "[LISTING_FORENSIC] cause=${e.cause?.javaClass?.name}: ${e.cause?.message}")
+                Log.e("LISTING_FORENSIC", "[LISTING_FORENSIC] stackTrace=${Log.getStackTraceString(e)}")
+
+                try {
+                    val crashlytics = FirebaseCrashlytics.getInstance()
+                    crashlytics.setCustomKey("listing_stage", "FIRESTORE_CREATE")
+                    crashlytics.setCustomKey("firebase_project_id", projectId)
+                    crashlytics.setCustomKey("firebase_auth_uid", currentUser.uid)
+                    crashlytics.setCustomKey("listing_seller_id", listing.sellerId)
+                    crashlytics.setCustomKey("listing_document_id", listing.id)
+                    crashlytics.setCustomKey("listing_is_approved", listing.isApproved)
+                    crashlytics.setCustomKey("firestore_error_code", firestoreCode)
+                    crashlytics.setCustomKey("exception_class", e.javaClass.name)
+                    crashlytics.recordException(e)
+                } catch (crashEx: Exception) {
+                    Log.e("LISTING_FORENSIC", "Crashlytics exception recording failed: ${crashEx.message}")
+                }
+
+                return Result.failure(e)
             }
 
             try {
@@ -216,7 +278,7 @@ class FirestoreRepository {
                 return Result.failure(Exception("LISTING_SELLER_PROFILE_UPDATE_FAILED: ${e.localizedMessage ?: e.message}"))
             }
 
-            Result.success(listingId)
+            Result.success(listing.id)
         } catch (e: Exception) {
             Log.e(TAG, "Failed to create listing: ${e.message}")
             Result.failure(e)
