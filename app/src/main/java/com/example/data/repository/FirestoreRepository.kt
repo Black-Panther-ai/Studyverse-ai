@@ -261,7 +261,7 @@ class FirestoreRepository {
                     crashlytics.setCustomKey("firestore_error_code", firestoreCode)
                     crashlytics.setCustomKey("exception_class", e.javaClass.name)
                     crashlytics.recordException(e)
-                } catch (crashEx: Exception) {
+                } catch (crashEx: Throwable) {
                     Log.e("LISTING_FORENSIC", "Crashlytics exception recording failed: ${crashEx.message}")
                 }
 

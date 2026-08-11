@@ -159,6 +159,43 @@ fun SettingsScreen(
                             var diagnosticOutput by remember { mutableStateOf("") }
                             var isTesting by remember { mutableStateOf(false) }
 
+                            val context = androidx.compose.ui.platform.LocalContext.current
+                            var crashReport by remember {
+                                mutableStateOf(
+                                    context.getSharedPreferences("startup_crash_prefs", android.content.Context.MODE_PRIVATE)
+                                        .getString("last_crash_report", "") ?: ""
+                                )
+                            }
+
+                            if (crashReport.isNotEmpty()) {
+                                Text("Previous startup crash detected:", color = Color.Red, fontWeight = FontWeight.Bold, fontSize = 12.sp)
+                                Spacer(modifier = Modifier.height(4.dp))
+                                var showCrashDetails by remember { mutableStateOf(false) }
+                                Button(
+                                    onClick = { showCrashDetails = !showCrashDetails },
+                                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error),
+                                    modifier = Modifier.fillMaxWidth()
+                                ) {
+                                    Text(if (showCrashDetails) "Hide Crash Details" else "Show Crash Details")
+                                }
+                                if (showCrashDetails) {
+                                    Spacer(modifier = Modifier.height(4.dp))
+                                    Text(crashReport, fontSize = 10.sp, color = MaterialTheme.colorScheme.onErrorContainer)
+                                    Spacer(modifier = Modifier.height(4.dp))
+                                    Button(
+                                        onClick = {
+                                            context.getSharedPreferences("startup_crash_prefs", android.content.Context.MODE_PRIVATE)
+                                                .edit().remove("last_crash_report").apply()
+                                            crashReport = ""
+                                        },
+                                        modifier = Modifier.fillMaxWidth()
+                                    ) {
+                                        Text("Clear Crash Report")
+                                    }
+                                }
+                                Spacer(modifier = Modifier.height(12.dp))
+                            }
+
                             if (diagnosticOutput.isNotEmpty()) {
                                 Text(diagnosticOutput, fontSize = 11.sp, color = MaterialTheme.colorScheme.onSecondaryContainer)
                                 Spacer(modifier = Modifier.height(8.dp))

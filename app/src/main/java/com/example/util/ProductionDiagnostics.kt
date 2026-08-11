@@ -9,7 +9,7 @@ object ProductionDiagnostics {
         try {
             Class.forName("com.google.firebase.crashlytics.FirebaseCrashlytics")
             true
-        } catch (e: Exception) {
+        } catch (t: Throwable) {
             false
         }
     }
@@ -23,7 +23,7 @@ object ProductionDiagnostics {
                 val instance = getInstanceMethod.invoke(null)
                 val logMethod = crashlyticsClass.getMethod("log", String::class.java)
                 logMethod.invoke(instance, message)
-            } catch (e: Exception) {
+            } catch (t: Throwable) {
                 // Ignore
             }
         }
@@ -42,7 +42,7 @@ object ProductionDiagnostics {
                 val instance = getInstanceMethod.invoke(null)
                 val recordExceptionMethod = crashlyticsClass.getMethod("recordException", Throwable::class.java)
                 recordExceptionMethod.invoke(instance, throwable)
-            } catch (e: Exception) {
+            } catch (t: Throwable) {
                 // Ignore
             }
         }
@@ -57,7 +57,7 @@ object ProductionDiagnostics {
                 val instance = getInstanceMethod.invoke(null)
                 val setCustomKeyMethod = crashlyticsClass.getMethod("setCustomKey", String::class.java, String::class.java)
                 setCustomKeyMethod.invoke(instance, key, value)
-            } catch (e: Exception) {
+            } catch (t: Throwable) {
                 // Ignore
             }
         }
@@ -72,7 +72,7 @@ object ProductionDiagnostics {
                 val instance = getInstanceMethod.invoke(null)
                 val setCustomKeyMethod = crashlyticsClass.getMethod("setCustomKey", String::class.java, Boolean::class.javaPrimitiveType)
                 setCustomKeyMethod.invoke(instance, key, value)
-            } catch (e: Exception) {
+            } catch (t: Throwable) {
                 // Ignore
             }
         }
@@ -87,7 +87,7 @@ object ProductionDiagnostics {
                 val instance = getInstanceMethod.invoke(null)
                 val setCustomKeyMethod = crashlyticsClass.getMethod("setCustomKey", String::class.java, Long::class.javaPrimitiveType)
                 setCustomKeyMethod.invoke(instance, key, value)
-            } catch (e: Exception) {
+            } catch (t: Throwable) {
                 // Ignore
             }
         }

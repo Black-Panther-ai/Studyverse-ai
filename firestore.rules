@@ -71,8 +71,8 @@ service cloud.firestore {
     }
 
     // 7. Developer diagnostics connectivity tests
-    match /diagnostics/{userId} {
-      allow read, write: if isOwner(userId);
+    match /diagnostics/{userId}/firestore_test/{diagnosticId} {
+      allow read, write: if isAuthenticated() && request.auth.uid == userId;
     }
 
     // Default deny for unknown collections
