@@ -159,6 +159,9 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     val selectedNote = MutableStateFlow<NoteEntity?>(null)
     val selectedProduct = MutableStateFlow<ProductEntity?>(null)
 
+    var lastSelectedPdfUriForDiag = ""
+    var lastSelectedPdfNameForDiag = ""
+
     // Upload Progress & State
     val uploadProgress = MutableStateFlow(0f)
     val isUploading = MutableStateFlow(false)
@@ -1113,20 +1116,28 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     val uri = Uri.parse(pdfUri)
                     val (fileSize, _) = getFileInfoFromUri(context, uri)
                     val safeSize = if (fileSize > 0) fileSize else 1024L * 1024L
+                    val fileMime = context.contentResolver.getType(uri) ?: "application/pdf"
 
-                    ProductionDiagnostics.log("[LISTING] STORAGE_PROVIDER: Railway S3")
-                    ProductionDiagnostics.log("[LISTING] STORAGE_PATH: digital-files/${user.id}/$tempId/...")
+                    Log.d("RAILWAY_STORAGE_FORENSIC", "--- RAILWAY_STORAGE_FORENSIC START ---")
+                    Log.d("RAILWAY_STORAGE_FORENSIC", "Authenticated UID: ${user.id}")
+                    Log.d("RAILWAY_STORAGE_FORENSIC", "Source URI Scheme: ${uri.scheme}")
+                    Log.d("RAILWAY_STORAGE_FORENSIC", "MIME Type: $fileMime")
+                    Log.d("RAILWAY_STORAGE_FORENSIC", "Filename: $pdfFileName")
+                    Log.d("RAILWAY_STORAGE_FORENSIC", "File Size: $fileSize")
 
+                    Log.d("RAILWAY_STORAGE_FORENSIC", "Upload Request: Calling presign-upload endpoint...")
                     val presignedResponse = railwayStorageRepository.requestPresignedUploadUrl(
                         listingId = tempId,
                         fileCategory = "digital_pdf",
                         contentType = "application/pdf",
                         fileSizeBytes = safeSize
                     )
+                    Log.d("RAILWAY_STORAGE_FORENSIC", "Presign-upload SUCCESS. Object Key: ${presignedResponse.objectKey}")
 
                     val inputStream = context.contentResolver.openInputStream(uri)
                         ?: throw IllegalStateException("Could not open input stream for PDF file.")
 
+                    Log.d("RAILWAY_STORAGE_FORENSIC", "Upload Request: S3 PUT upload started...")
                     val uploadSuccess = inputStream.use { stream ->
                         railwayStorageRepository.uploadFileDirectlyToS3(
                             uploadUrl = presignedResponse.uploadUrl,
@@ -1136,16 +1147,22 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                         )
                     }
 
+                    Log.d("RAILWAY_STORAGE_FORENSIC", "S3 PUT upload completed. Success: $uploadSuccess")
+
                     if (!uploadSuccess) {
                         throw IllegalStateException("S3 PUT upload failed for digital PDF.")
                     }
 
                     digitalFilePath = presignedResponse.objectKey
                     ProductionDiagnostics.log("[LISTING] PDF_UPLOAD: SUCCESS (objectKey: $digitalFilePath)")
+                    Log.d("RAILWAY_STORAGE_FORENSIC", "--- RAILWAY_STORAGE_FORENSIC SUCCESS ---")
                 } else {
                     digitalFilePath = pdfUri
                 }
             } catch (e: Exception) {
+                Log.e("RAILWAY_STORAGE_FORENSIC", "--- RAILWAY_STORAGE_FORENSIC FAILURE ---")
+                Log.e("RAILWAY_STORAGE_FORENSIC", "Exception Class: ${e.javaClass.name}")
+                Log.e("RAILWAY_STORAGE_FORENSIC", "Exception Message: ${e.message}")
                 ProductionDiagnostics.logError("[LISTING] LISTING_PDF_UPLOAD_FAILED: FAILURE (${e.message})", e)
                 
                 ProductionDiagnostics.setCustomKey("operation", "listing_pdf_upload")
@@ -1619,6 +1636,212 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                 sb.append("General diagnostics failure: ${e.message}\n")
             }
             sb.append("--- FIREBASE DIAGNOSTICS END ---")
+            onResult(sb.toString())
+        }
+    }
+
+    fun runRailwayStorageDiagnostics(onResult: (String) -> Unit) {
+        viewModelScope.launch {
+            val sb = java.lang.StringBuilder()
+            sb.append("--- RAILWAY STORAGE DIAGNOSTICS STARTED ---\n")
+            try {
+                val auth = FirebaseAuth.getInstance()
+                val user = auth.currentUser
+                if (user == null) {
+                    sb.append("A. Auth: FAILED (Not Authenticated)\n")
+                    onResult(sb.toString())
+                    return@launch
+                }
+                sb.append("A. Auth: SUCCESS (UID: ${user.uid})\n")
+
+                val db = FirebaseManager.firestore
+                if (db == null) {
+                    sb.append("B. Firestore: FAILED (db is null)\n")
+                    onResult(sb.toString())
+                    return@launch
+                }
+                sb.append("B. Firestore: SUCCESS\n")
+
+                val tempListingId = "diag_listing_${System.currentTimeMillis()}"
+                sb.append("C. Creating temp listing: START (ID: $tempListingId)\n")
+                val tempListingMap = mapOf(
+                    "id" to tempListingId,
+                    "sellerId" to user.uid,
+                    "sellerDisplayName" to "Diag User",
+                    "categoryId" to "Diagnostics",
+                    "title" to "Storage Diagnostics Temp Listing",
+                    "description" to "Temporary diagnostic test",
+                    "pricePaise" to 0L,
+                    "originalPricePaise" to 0L,
+                    "listingType" to "digital_note",
+                    "condition" to "New",
+                    "collegeName" to "Diag College",
+                    "city" to "Diag City",
+                    "imageUrls" to emptyList<String>(),
+                    "digitalFilePath" to "",
+                    "status" to "draft",
+                    "isApproved" to false
+                )
+
+                try {
+                    db.collection("listings").document(tempListingId).set(tempListingMap).await()
+                    sb.append("   Temp listing creation: SUCCESS\n")
+                } catch (e: Exception) {
+                    sb.append("   Temp listing creation: FAILED (${e.message})\n")
+                    onResult(sb.toString())
+                    return@launch
+                }
+
+                sb.append("D. Requesting presigned URL: START\n")
+                val testBytes = "STUDYVERSE_STORAGE_TEST_PAYLOAD".toByteArray(java.nio.charset.StandardCharsets.UTF_8)
+                val testSize = testBytes.size.toLong()
+
+                try {
+                    val presignedResponse = railwayStorageRepository.requestPresignedUploadUrl(
+                        listingId = tempListingId,
+                        fileCategory = "listing_image",
+                        contentType = "image/jpeg",
+                        fileSizeBytes = testSize
+                    )
+                    sb.append("   Presigned URL request: SUCCESS\n")
+                    sb.append("   Object Key: ${presignedResponse.objectKey}\n")
+
+                    sb.append("E. S3 PUT upload: START\n")
+                    val uploadSuccess = railwayStorageRepository.uploadFileDirectlyToS3(
+                        uploadUrl = presignedResponse.uploadUrl,
+                        inputStream = testBytes.inputStream(),
+                        contentType = "image/jpeg",
+                        contentLength = testSize
+                    )
+
+                    if (uploadSuccess) {
+                        sb.append("   S3 PUT upload: SUCCESS\n")
+                    } else {
+                        sb.append("   S3 PUT upload: FAILED\n")
+                    }
+                } catch (e: Exception) {
+                    sb.append("   Error during S3 upload chain: ${e.message}\n")
+                } finally {
+                    sb.append("F. Cleanup temp listing: START\n")
+                    try {
+                        db.collection("listings").document(tempListingId).delete().await()
+                        sb.append("   Cleanup temp listing: SUCCESS\n")
+                    } catch (e: Exception) {
+                        sb.append("   Cleanup temp listing: FAILED (${e.message})\n")
+                    }
+                }
+            } catch (e: Exception) {
+                sb.append("Diagnostics failure: ${e.message}\n")
+            }
+            sb.append("--- RAILWAY STORAGE DIAGNOSTICS END ---")
+            onResult(sb.toString())
+        }
+    }
+
+    fun testPdfRailwayUpload(
+        context: Context,
+        selectedPdfUriString: String,
+        pdfFileName: String,
+        onResult: (String) -> Unit
+    ) {
+        viewModelScope.launch {
+            val sb = java.lang.StringBuilder()
+            sb.append("--- PDF RAILWAY UPLOAD STARTED ---\n")
+            if (selectedPdfUriString.isBlank()) {
+                sb.append("Error: No PDF URI specified.\n")
+                onResult(sb.toString())
+                return@launch
+            }
+
+            try {
+                val uri = Uri.parse(selectedPdfUriString)
+                val (fileSize, fileMime) = getFileInfoFromUri(context, uri)
+                sb.append("Source URI: $selectedPdfUriString\n")
+                sb.append("Source URI Scheme: ${uri.scheme}\n")
+                sb.append("Source URI Authority: ${uri.authority}\n")
+                sb.append("Source MIME Type: $fileMime\n")
+                sb.append("Source File Name: $pdfFileName\n")
+                sb.append("Source File Size: $fileSize bytes\n")
+
+                val user = currentUser.value
+                val sellerUid = user?.id ?: "unauthenticated"
+                val tempListingId = "diag_listing_${System.currentTimeMillis()}"
+
+                val db = FirebaseManager.firestore
+                if (db == null) {
+                    sb.append("Firestore: FAILED (db is null)\n")
+                    onResult(sb.toString())
+                    return@launch
+                }
+
+                sb.append("Creating temp listing for S3 ownership check...\n")
+                val tempListingMap = mapOf(
+                    "id" to tempListingId,
+                    "sellerId" to sellerUid,
+                    "sellerDisplayName" to "Diag User",
+                    "categoryId" to "Diagnostics",
+                    "title" to "PDF Upload Diagnostics Temp Listing",
+                    "description" to "Temporary diagnostic test",
+                    "pricePaise" to 0L,
+                    "originalPricePaise" to 0L,
+                    "listingType" to "digital_note",
+                    "condition" to "New",
+                    "collegeName" to "Diag College",
+                    "city" to "Diag City",
+                    "imageUrls" to emptyList<String>(),
+                    "digitalFilePath" to "",
+                    "status" to "draft",
+                    "isApproved" to false
+                )
+                db.collection("listings").document(tempListingId).set(tempListingMap).await()
+
+                try {
+                    sb.append("Requesting presigned upload URL from Railway backend...\n")
+                    val presignedResponse = railwayStorageRepository.requestPresignedUploadUrl(
+                        listingId = tempListingId,
+                        fileCategory = "digital_pdf",
+                        contentType = "application/pdf",
+                        fileSizeBytes = if (fileSize > 0) fileSize else 1024L * 1024L
+                    )
+                    sb.append("Presigned URL: SUCCESS\n")
+                    sb.append("Object Key: ${presignedResponse.objectKey}\n")
+
+                    sb.append("Opening InputStream: START\n")
+                    val inputStream = context.contentResolver.openInputStream(uri)
+                    if (inputStream == null) {
+                        sb.append("Opening InputStream: FAILED (stream is null)\n")
+                    } else {
+                        sb.append("Opening InputStream: SUCCESS\n")
+                        sb.append("Railway S3 PUT upload: START\n")
+                        val uploadSuccess = inputStream.use { stream ->
+                            railwayStorageRepository.uploadFileDirectlyToS3(
+                                uploadUrl = presignedResponse.uploadUrl,
+                                inputStream = stream,
+                                contentType = "application/pdf",
+                                contentLength = if (fileSize > 0) fileSize else 1024L * 1024L
+                            )
+                        }
+                        if (uploadSuccess) {
+                            sb.append("Railway S3 PUT upload: SUCCESS\n")
+                        } else {
+                            sb.append("Railway S3 PUT upload: FAILED\n")
+                        }
+                    }
+                } catch (e: Exception) {
+                    sb.append("Upload failed: ${e.message}\n")
+                } finally {
+                    sb.append("Cleanup temp listing...\n")
+                    try {
+                        db.collection("listings").document(tempListingId).delete().await()
+                        sb.append("Cleanup SUCCESS\n")
+                    } catch (e: Exception) {
+                        sb.append("Cleanup FAILED: ${e.message}\n")
+                    }
+                }
+            } catch (e: Exception) {
+                sb.append("Diagnostics error: ${e.message}\n")
+            }
+            sb.append("--- PDF RAILWAY UPLOAD END ---")
             onResult(sb.toString())
         }
     }

@@ -600,6 +600,9 @@ fun UploadModalDialog(
                             val finalPdfName = if (selectedPdfName.isNotBlank()) selectedPdfName else "HandwrittenNotes.pdf"
                             val previewStrings = selectedPreviewUris.map { it.toString() }
 
+                            viewModel.lastSelectedPdfUriForDiag = finalPdfUri
+                            viewModel.lastSelectedPdfNameForDiag = finalPdfName
+
                             viewModel.createHandwrittenNotes(
                                 context = context,
                                 title = titleInput.ifEmpty { "Handwritten Lecture Notes" },

@@ -214,6 +214,44 @@ fun SettingsScreen(
                             ) {
                                 Text(if (isTesting) "Running Diagnostics..." else "Run Firebase Diagnostics")
                             }
+
+                            Spacer(modifier = Modifier.height(8.dp))
+
+                            Button(
+                                onClick = {
+                                    isTesting = true
+                                    viewModel.runRailwayStorageDiagnostics { result ->
+                                        diagnosticOutput = result
+                                        isTesting = false
+                                    }
+                                },
+                                enabled = !isTesting,
+                                modifier = Modifier.fillMaxWidth().testTag("run_railway_diagnostics_button")
+                            ) {
+                                Text(if (isTesting) "Running Railway Diagnostics..." else "Run Railway Storage Diagnostics")
+                            }
+
+                            Spacer(modifier = Modifier.height(8.dp))
+
+                            Button(
+                                onClick = {
+                                    val lastUri = viewModel.lastSelectedPdfUriForDiag
+                                    val lastName = viewModel.lastSelectedPdfNameForDiag
+                                    if (lastUri.isEmpty()) {
+                                        diagnosticOutput = "Error: No PDF has been selected yet. Go to Sell tab, select a PDF first, then return here to test."
+                                    } else {
+                                        isTesting = true
+                                        viewModel.testPdfRailwayUpload(context, lastUri, lastName) { result ->
+                                            diagnosticOutput = result
+                                            isTesting = false
+                                        }
+                                    }
+                                },
+                                enabled = !isTesting,
+                                modifier = Modifier.fillMaxWidth().testTag("test_pdf_railway_button")
+                            ) {
+                                Text(if (isTesting) "Testing PDF Railway Upload..." else "Test PDF Railway Upload")
+                            }
                         }
                     }
                 }
