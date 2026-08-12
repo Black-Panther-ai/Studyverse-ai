@@ -1719,8 +1719,19 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     } else {
                         sb.append("   S3 PUT upload: FAILED\n")
                     }
+                } catch (e: com.example.data.repository.RailwayApiException) {
+                    sb.append("   Railway API Error:\n")
+                    sb.append("      Exception Class: ${e.javaClass.name}\n")
+                    sb.append("      Exception Message: ${e.message}\n")
+                    sb.append("      Cause: ${e.cause?.javaClass?.name}: ${e.cause?.message}\n")
+                    sb.append("      HTTP Status Code: ${e.statusCode}\n")
+                    sb.append("      HTTP Error Body: ${e.responseBody}\n")
+                    sb.append("      API Endpoint Path: ${e.endpointUrl}\n")
                 } catch (e: Exception) {
-                    sb.append("   Error during S3 upload chain: ${e.message}\n")
+                    sb.append("   Error during S3 upload chain:\n")
+                    sb.append("      Exception Class: ${e.javaClass.name}\n")
+                    sb.append("      Exception Message: ${e.message}\n")
+                    sb.append("      Cause: ${e.cause?.javaClass?.name}: ${e.cause?.message}\n")
                 } finally {
                     sb.append("F. Cleanup temp listing: START\n")
                     try {
@@ -1827,8 +1838,19 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                             sb.append("Railway S3 PUT upload: FAILED\n")
                         }
                     }
+                } catch (e: com.example.data.repository.RailwayApiException) {
+                    sb.append("   Railway API Error:\n")
+                    sb.append("      Exception Class: ${e.javaClass.name}\n")
+                    sb.append("      Exception Message: ${e.message}\n")
+                    sb.append("      Cause: ${e.cause?.javaClass?.name}: ${e.cause?.message}\n")
+                    sb.append("      HTTP Status Code: ${e.statusCode}\n")
+                    sb.append("      HTTP Error Body: ${e.responseBody}\n")
+                    sb.append("      API Endpoint Path: ${e.endpointUrl}\n")
                 } catch (e: Exception) {
-                    sb.append("Upload failed: ${e.message}\n")
+                    sb.append("   Upload failed:\n")
+                    sb.append("      Exception Class: ${e.javaClass.name}\n")
+                    sb.append("      Exception Message: ${e.message}\n")
+                    sb.append("      Cause: ${e.cause?.javaClass?.name}: ${e.cause?.message}\n")
                 } finally {
                     sb.append("Cleanup temp listing...\n")
                     try {

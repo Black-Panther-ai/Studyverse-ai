@@ -12,6 +12,14 @@ import org.json.JSONObject
 import java.io.InputStream
 import java.util.concurrent.TimeUnit
 
+class RailwayApiException(
+    val statusCode: Int,
+    val responseBody: String,
+    val endpointUrl: String,
+    message: String,
+    cause: Throwable? = null
+) : Exception(message, cause)
+
 class RailwayStorageRepository(
     private val baseUrl: String = NetworkConfig.baseUrl,
     private val client: OkHttpClient = OkHttpClient.Builder()
@@ -31,7 +39,7 @@ class RailwayStorageRepository(
     private suspend fun executeProtectedRequest(
         url: String,
         jsonBody: JSONObject
-    ): String {
+    ): String = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
         var idToken = getFirebaseIdToken(forceRefresh = false)
 
         val makeRequest = { token: String ->
@@ -57,10 +65,15 @@ class RailwayStorageRepository(
         if (!response.isSuccessful) {
             val errorJson = try { JSONObject(responseText) } catch (e: Exception) { null }
             val errorMsg = errorJson?.optString("message") ?: "HTTP ${response.code}: API request failed"
-            throw IllegalStateException(errorMsg)
+            throw RailwayApiException(
+                statusCode = response.code,
+                responseBody = responseText,
+                endpointUrl = url,
+                message = errorMsg
+            )
         }
 
-        return responseText
+        responseText
     }
 
     data class PresignedUploadResponse(
@@ -103,7 +116,7 @@ class RailwayStorageRepository(
         inputStream: InputStream,
         contentType: String,
         contentLength: Long
-    ): Boolean {
+    ): Boolean = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
         val bytes = inputStream.readBytes()
         val requestBody = bytes.toRequestBody(contentType.toMediaTypeOrNull())
 
@@ -114,11 +127,20 @@ class RailwayStorageRepository(
             .build()
 
         val response = client.newCall(request).execute()
-        return response.isSuccessful
+        if (!response.isSuccessful) {
+            val bodyText = response.body?.string() ?: ""
+            throw RailwayApiException(
+                statusCode = response.code,
+                responseBody = bodyText,
+                endpointUrl = "S3_PUT_UPLOAD",
+                message = "S3 PUT upload failed with status ${response.code}"
+            )
+        }
+        true
     }
 
-    suspend fun fetchPublicImageSignedUrls(objectKeys: List<String>): Map<String, String> {
-        if (objectKeys.isEmpty()) return emptyMap()
+    suspend fun fetchPublicImageSignedUrls(objectKeys: List<String>): Map<String, String> = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+        if (objectKeys.isEmpty()) return@withContext emptyMap<String, String>()
 
         val jsonArray = JSONArray()
         objectKeys.forEach { jsonArray.put(it) }
@@ -134,16 +156,16 @@ class RailwayStorageRepository(
         val response = client.newCall(request).execute()
         val responseText = response.body?.string() ?: ""
 
-        if (!response.isSuccessful) return emptyMap()
+        if (!response.isSuccessful) return@withContext emptyMap<String, String>()
 
         val json = JSONObject(responseText)
-        val urlsJson = json.optJSONObject("urls") ?: return emptyMap()
+        val urlsJson = json.optJSONObject("urls") ?: return@withContext emptyMap<String, String>()
 
         val resultMap = mutableMapOf<String, String>()
         urlsJson.keys().forEach { key ->
             resultMap[key] = urlsJson.getString(key)
         }
-        return resultMap
+        resultMap
     }
 
     suspend fun requestPrivateDownloadUrl(listingId: String, orderId: String): String {
