@@ -7,6 +7,8 @@ import healthRoutes from './routes/health';
 import storageRoutes from './routes/storage';
 import paymentRoutes from './routes/payments';
 import razorpayWebhookRoutes from './routes/razorpayWebhook';
+import aiRoutes from './routes/ai';
+
 
 const app = express();
 
@@ -46,6 +48,8 @@ app.use(express.json({ limit: '10mb' }));
 // API Routes
 app.use('/api/v1/storage', storageRoutes);
 app.use('/api/v1/payments', paymentRoutes);
+app.use('/api/v1/ai', aiRoutes);
+
 
 // Centralized error handler
 app.use((err: any, _req: express.Request, res: express.Response, _next: express.NextFunction) => {

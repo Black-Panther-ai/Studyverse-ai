@@ -20,6 +20,10 @@ const envSchema = z.object({
   RAZORPAY_KEY_ID: z.string().default(''),
   RAZORPAY_KEY_SECRET: z.string().default(''),
   RAZORPAY_WEBHOOK_SECRET: z.string().default(''),
+  GEMINI_API_KEY: z.string().default(''),
+  GEMINI_PRIMARY_MODEL: z.string().default('gemini-3.6-flash'),
+  GEMINI_FALLBACK_MODEL: z.string().default('gemini-3.5-flash'),
+  GEMINI_LITE_MODEL: z.string().default('gemini-3.1-flash-lite'),
 
   PRESIGNED_UPLOAD_EXPIRY_SECONDS: z.string().default('900').transform((val) => parseInt(val, 10)),
   PUBLIC_IMAGE_EXPIRY_SECONDS: z.string().default('3600').transform((val) => parseInt(val, 10)),

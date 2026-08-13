@@ -1,5 +1,20 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import crypto from 'crypto';
+
+vi.mock('../src/services/firebaseAdmin', () => {
+  return {
+    getFirebaseAdmin: () => ({}),
+    getAuth: () => ({
+      verifyIdToken: async (token: string) => {
+        if (token === 'valid_mock_token') {
+          return { uid: 'user_123', email: 'test@example.com' };
+        }
+        throw new Error('Invalid token');
+      },
+    }),
+    getFirestore: () => ({}),
+  };
+});
 
 process.env.RAZORPAY_WEBHOOK_SECRET = 'test_webhook_secret_key';
 
@@ -116,5 +131,50 @@ describe('StudySwap AI Backend API Test Suite', () => {
 
     expect(res.status).toBe(200);
     expect(res.body.status).toBeDefined();
+  });
+
+  it('POST /api/v1/ai/generate rejects request missing Authorization header', async () => {
+    const res = await request(app)
+      .post('/api/v1/ai/generate')
+      .send({
+        prompt: 'What is photosynthesis?',
+        mode: 'Explain',
+      });
+
+    expect(res.status).toBe(401);
+    expect(res.body.error).toBe('UNAUTHORIZED');
+  });
+
+  it('POST /api/v1/ai/generate rejects invalid bearer token', async () => {
+    const res = await request(app)
+      .post('/api/v1/ai/generate')
+      .set('Authorization', 'Bearer invalid_token_xyz')
+      .send({
+        prompt: 'What is photosynthesis?',
+        mode: 'Explain',
+      });
+
+    expect(res.status).toBe(401);
+    expect(res.body.error).toBe('UNAUTHORIZED');
+  });
+
+  it('POST /api/v1/ai/generate rejects invalid request params', async () => {
+    // Missing prompt
+    const res1 = await request(app)
+      .post('/api/v1/ai/generate')
+      .set('Authorization', 'Bearer valid_mock_token')
+      .send({
+        mode: 'Explain',
+      });
+    expect(res1.status).toBe(400);
+
+    // Missing mode
+    const res2 = await request(app)
+      .post('/api/v1/ai/generate')
+      .set('Authorization', 'Bearer valid_mock_token')
+      .send({
+        prompt: 'Explain photosynthesis',
+      });
+    expect(res2.status).toBe(400);
   });
 });

@@ -143,10 +143,10 @@ class Prompt2UnitTests {
 
     @Test
     fun testGeminiModelEndpointResolution() {
-        val modelName = "gemini-1.5-flash"
+        val modelName = "gemini-3.6-flash"
         val endpointUrl = "https://generativelanguage.googleapis.com/v1beta/models/$modelName:generateContent"
 
-        assertTrue(endpointUrl.contains("gemini-1.5-flash"))
-        assertFalse(endpointUrl.contains("gemini-3.5-flash"))
+        assertTrue(endpointUrl.contains("gemini-3.6-flash"))
+        assertFalse(endpointUrl.contains("gemini-1.5-flash"))
     }
 }
