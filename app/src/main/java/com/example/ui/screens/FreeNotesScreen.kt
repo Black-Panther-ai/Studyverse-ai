@@ -28,6 +28,7 @@ fun FreeNotesScreen(
     viewModel: MainViewModel,
     onNoteSelect: (NoteEntity) -> Unit
 ) {
+    val context = androidx.compose.ui.platform.LocalContext.current
     val freeNotes by viewModel.freeNotes.collectAsState()
     val myBookmarks by viewModel.myBookmarks.collectAsState()
     val bookmarkIds = remember(myBookmarks) { myBookmarks.map { it.itemId }.toSet() }
@@ -108,7 +109,7 @@ fun FreeNotesScreen(
                                 viewModel.toggleBookmark(note.id, note.title, "NOTE", note.subject, note.price)
                             },
                             onActionClick = {
-                                viewModel.downloadFreeNote(note)
+                                viewModel.downloadFreeNote(note, context)
                             }
                         )
                     }

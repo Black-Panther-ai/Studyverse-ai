@@ -98,8 +98,9 @@ router.post('/private-download-url', requireFirebaseAuth, async (req: Authentica
     const listingDoc = await firestore.collection('listings').doc(listingId).get();
     const listing = listingDoc.data();
     const isSellerOwner = listing && listing.sellerId === buyerUid;
+    const isFreeListing = listing && (listing.isFree === true || listing.pricePaise === 0 || listing.price === 0);
 
-    if (entitlementQuery.empty && !isSellerOwner) {
+    if (entitlementQuery.empty && !isSellerOwner && !isFreeListing) {
       res.status(403).json({ error: 'FORBIDDEN', message: 'You do not hold an active download entitlement for this item.' });
       return;
     }

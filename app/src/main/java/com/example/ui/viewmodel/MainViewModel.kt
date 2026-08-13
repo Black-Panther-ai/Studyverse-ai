@@ -623,7 +623,6 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             "s3_object_key"
         }
         Log.d("DOWNLOAD_FORENSIC", "[DOWNLOAD_FORENSIC] source type=$urlType")
-        Log.d("DOWNLOAD_FORENSIC", "[DOWNLOAD_FORENSIC] download URL/path type=$urlType")
 
         if (user == null) {
             ProductionDiagnostics.logError("DOWNLOAD_AUTH_FAILED: User is not authenticated.")
@@ -631,124 +630,153 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
             return
         }
 
-        uiMessage.value = "Downloading ${note.title}..."
+        if (context == null) {
+            Log.e("DOWNLOAD_FORENSIC", "[DOWNLOAD_FORENSIC] FAILED: Context is null")
+            return
+        }
+
         val downloadId = "download_${user.id}_${note.id}"
         val timestamp = System.currentTimeMillis()
 
-        val onDownloadSuccess = { file: java.io.File ->
-            Log.d("DOWNLOAD_FORENSIC", "[DOWNLOAD_FORENSIC] local file path=${file.absolutePath}")
-            Log.d("DOWNLOAD_FORENSIC", "[DOWNLOAD_FORENSIC] fileExists=${file.exists()}")
-            Log.d("DOWNLOAD_FORENSIC", "[DOWNLOAD_FORENSIC] fileSize=${file.length()}")
-            Log.d("DOWNLOAD_FORENSIC", "[DOWNLOAD_FORENSIC] canRead=${file.canRead()}")
-            
-            Log.d("DOWNLOAD_FORENSIC", "[DOWNLOAD_FORENSIC] FILE_VERIFIED")
-            uiMessage.value = "Downloaded ${note.title} to Downloads folder!"
-            
-            // 1. Log download history to Firestore
-            Log.d("DOWNLOAD_FORENSIC", "[DOWNLOAD_FORENSIC] HISTORY_WRITE_START")
-            viewModelScope.launch {
-                try {
-                    val db = FirebaseManager.firestore
-                    if (db != null) {
-                        val downloadMap = mapOf(
-                            "id" to downloadId,
-                            "userId" to user.id,
-                            "noteId" to note.id,
-                            "noteTitle" to note.title,
-                            "authorName" to note.authorName,
-                            "timestamp" to timestamp,
-                            "pdfUriOrUrl" to note.pdfUriOrUrl
-                        )
-                        db.collection("download_history").document(downloadId).set(downloadMap).await()
-                        Log.d("DOWNLOAD_FORENSIC", "[DOWNLOAD_FORENSIC] HISTORY_WRITE_SUCCESS")
-                    } else {
-                        Log.e("DOWNLOAD_FORENSIC", "[DOWNLOAD_FORENSIC] HISTORY_WRITE_FAILED")
-                        Log.e("DOWNLOAD_FORENSIC", "[DOWNLOAD_FORENSIC] exceptionMessage=Firestore is null")
-                    }
-                } catch (e: Exception) {
-                    val firestoreCode = if (e is com.google.firebase.firestore.FirebaseFirestoreException) {
-                        e.code.name
-                    } else {
-                        "NONE"
-                    }
-                    Log.e("DOWNLOAD_FORENSIC", "[DOWNLOAD_FORENSIC] HISTORY_WRITE_FAILED")
-                    Log.e("DOWNLOAD_FORENSIC", "[DOWNLOAD_FORENSIC] firestoreCode=$firestoreCode")
-                    Log.e("DOWNLOAD_FORENSIC", "[DOWNLOAD_FORENSIC] exceptionMessage=${e.message}")
-                }
-            }
+        viewModelScope.launch {
+            isDownloadingPdf.value = true
+            uiMessage.value = "Downloading ${note.title}..."
 
-            // 2. Insert order entity in Room immediately for instant dashboard refresh
-            Log.d("DOWNLOAD_FORENSIC", "[DOWNLOAD_FORENSIC] ROOM_INSERT_START")
-            viewModelScope.launch {
-                try {
-                    val localOrder = OrderEntity(
-                        id = downloadId,
-                        buyerId = user.id,
-                        buyerName = user.name,
-                        sellerId = note.authorId,
-                        itemId = note.id,
-                        itemTitle = note.title,
-                        itemType = "DIGITAL_NOTE",
-                        price = 0.0,
-                        status = "COMPLETED",
-                        paymentId = "FREE",
-                        timestamp = timestamp,
-                        watermarkedDownloadUrl = note.pdfUriOrUrl
-                    )
-                    repository.insertOrders(listOf(localOrder))
-                    Log.d("DOWNLOAD_FORENSIC", "[DOWNLOAD_FORENSIC] ROOM_INSERT_SUCCESS")
-                    
-                    // Clean-sync cache with Firestore
-                    syncPurchasesFromFirestore()
-                } catch (roomEx: Exception) {
-                    Log.e("DOWNLOAD_FORENSIC", "Room insert failed: ${roomEx.message}")
-                }
-            }
-        }
-
-        // Initiate actual file download
-        if (context != null) {
-            val downloadUrl = note.pdfUriOrUrl
-            val fileName = "${note.title.replace(" ", "_")}.pdf"
-            
-            if (downloadUrl.startsWith("http://") || downloadUrl.startsWith("https://")) {
-                com.example.util.AndroidDownloadManagerHelper.downloadPdfWithManager(
-                    context = context,
-                    downloadUrl = downloadUrl,
-                    title = note.title,
-                    fileName = fileName,
-                    onComplete = { file ->
-                        val resultText = if (file != null && file.exists()) "SUCCESS" else "FAILURE"
-                        Log.d("DOWNLOAD_FORENSIC", "[DOWNLOAD_FORENSIC] HTTP/storage result=$resultText")
-                        
-                        if (file != null && file.exists() && file.length() > 0 && file.canRead()) {
-                            onDownloadSuccess(file)
+            val onDownloadSuccess = { file: java.io.File ->
+                Log.d("DOWNLOAD_FORENSIC", "[DOWNLOAD_FORENSIC] local file path=${file.absolutePath}")
+                Log.d("DOWNLOAD_FORENSIC", "[DOWNLOAD_FORENSIC] fileExists=${file.exists()}")
+                Log.d("DOWNLOAD_FORENSIC", "[DOWNLOAD_FORENSIC] fileSize=${file.length()}")
+                Log.d("DOWNLOAD_FORENSIC", "[DOWNLOAD_FORENSIC] canRead=${file.canRead()}")
+                
+                Log.d("DOWNLOAD_FORENSIC", "[DOWNLOAD_FORENSIC] FILE_VERIFIED")
+                uiMessage.value = "Downloaded ${note.title} to Downloads folder!"
+                
+                // 1. Log download history to Firestore
+                Log.d("DOWNLOAD_FORENSIC", "[DOWNLOAD_FORENSIC] HISTORY_WRITE_START")
+                viewModelScope.launch {
+                    try {
+                        val db = FirebaseManager.firestore
+                        if (db != null) {
+                            val downloadMap = mapOf(
+                                "id" to downloadId,
+                                "userId" to user.id,
+                                "noteId" to note.id,
+                                "noteTitle" to note.title,
+                                "authorName" to note.authorName,
+                                "timestamp" to timestamp,
+                                "pdfUriOrUrl" to note.pdfUriOrUrl
+                            )
+                            db.collection("download_history").document(downloadId).set(downloadMap).await()
+                            Log.d("DOWNLOAD_FORENSIC", "[DOWNLOAD_FORENSIC] HISTORY_WRITE_SUCCESS")
                         } else {
-                            val existStatus = file?.exists() ?: false
-                            val len = file?.length() ?: 0L
-                            val readStatus = file?.canRead() ?: false
-                            Log.e("DOWNLOAD_FORENSIC", "[DOWNLOAD_FORENSIC] FILE_VERIFIED_FAILED: exists=$existStatus, size=$len, readable=$readStatus")
-                            uiMessage.value = "Download failed for ${note.title}."
+                            Log.e("DOWNLOAD_FORENSIC", "[DOWNLOAD_FORENSIC] HISTORY_WRITE_FAILED")
+                            Log.e("DOWNLOAD_FORENSIC", "[DOWNLOAD_FORENSIC] exceptionMessage=Firestore is null")
                         }
+                    } catch (e: Exception) {
+                        val firestoreCode = if (e is com.google.firebase.firestore.FirebaseFirestoreException) {
+                            e.code.name
+                        } else {
+                            "NONE"
+                        }
+                        Log.e("DOWNLOAD_FORENSIC", "[DOWNLOAD_FORENSIC] HISTORY_WRITE_FAILED")
+                        Log.e("DOWNLOAD_FORENSIC", "[DOWNLOAD_FORENSIC] firestoreCode=$firestoreCode")
+                        Log.e("DOWNLOAD_FORENSIC", "[DOWNLOAD_FORENSIC] exceptionMessage=${e.message}")
                     }
-                )
-            } else {
-                val pdfFile = com.example.util.PdfDownloadHelper.generateAndSavePdf(
-                    context = context,
-                    noteTitle = note.title,
-                    buyerName = user.name,
-                    orderId = "FREE_${timestamp.toString().takeLast(6)}",
-                    authorName = note.authorName
-                )
-                if (pdfFile != null && pdfFile.exists() && pdfFile.length() > 0 && pdfFile.canRead()) {
-                    onDownloadSuccess(pdfFile)
-                } else {
-                    val existStatus = pdfFile?.exists() ?: false
-                    val len = pdfFile?.length() ?: 0L
-                    val readStatus = pdfFile?.canRead() ?: false
-                    Log.e("DOWNLOAD_FORENSIC", "[DOWNLOAD_FORENSIC] FILE_VERIFIED_FAILED: exists=$existStatus, size=$len, readable=$readStatus")
-                    uiMessage.value = "Download failed for ${note.title}."
                 }
+
+                // 2. Insert order entity in Room immediately for instant dashboard refresh
+                Log.d("DOWNLOAD_FORENSIC", "[DOWNLOAD_FORENSIC] ROOM_INSERT_START")
+                viewModelScope.launch {
+                    try {
+                        val localOrder = OrderEntity(
+                            id = downloadId,
+                            buyerId = user.id,
+                            buyerName = user.name,
+                            sellerId = note.authorId,
+                            itemId = note.id,
+                            itemTitle = note.title,
+                            itemType = "DIGITAL_NOTE",
+                            price = 0.0,
+                            status = "COMPLETED",
+                            paymentId = "FREE",
+                            timestamp = timestamp,
+                            watermarkedDownloadUrl = note.pdfUriOrUrl
+                        )
+                        repository.insertOrders(listOf(localOrder))
+                        Log.d("DOWNLOAD_FORENSIC", "[DOWNLOAD_FORENSIC] ROOM_INSERT_SUCCESS")
+                        
+                        // Clean-sync cache with Firestore
+                        syncPurchasesFromFirestore()
+                    } catch (roomEx: Exception) {
+                        Log.e("DOWNLOAD_FORENSIC", "Room insert failed: ${roomEx.message}")
+                    }
+                }
+            }
+
+            try {
+                val fileName = "${note.title.replace(" ", "_")}.pdf"
+                if (urlType == "s3_object_key") {
+                    uiMessage.value = "Requesting download URL from S3..."
+                    val signedUrl = railwayStorageRepository.requestPrivateDownloadUrl(note.id, downloadId)
+                    
+                    uiMessage.value = "Starting secure download..."
+                    com.example.util.AndroidDownloadManagerHelper.downloadPdfWithManager(
+                        context = context,
+                        downloadUrl = signedUrl,
+                        title = note.title,
+                        fileName = fileName,
+                        onComplete = { file ->
+                            isDownloadingPdf.value = false
+                            if (file != null && file.exists() && file.length() > 0 && file.canRead()) {
+                                downloadedPdfFile.value = file
+                                onDownloadSuccess(file)
+                            } else {
+                                Log.e("DOWNLOAD_FORENSIC", "[DOWNLOAD_FORENSIC] S3 Download complete but file verification failed.")
+                                uiMessage.value = "Download failed."
+                            }
+                        }
+                    )
+                } else if (urlType == "http_url") {
+                    com.example.util.AndroidDownloadManagerHelper.downloadPdfWithManager(
+                        context = context,
+                        downloadUrl = url,
+                        title = note.title,
+                        fileName = fileName,
+                        onComplete = { file ->
+                            isDownloadingPdf.value = false
+                            if (file != null && file.exists() && file.length() > 0 && file.canRead()) {
+                                downloadedPdfFile.value = file
+                                onDownloadSuccess(file)
+                            } else {
+                                Log.e("DOWNLOAD_FORENSIC", "[DOWNLOAD_FORENSIC] HTTP Download complete but file verification failed.")
+                                uiMessage.value = "Download failed."
+                            }
+                        }
+                    )
+                } else {
+                    val pdfFile = com.example.util.PdfDownloadHelper.generateAndSavePdf(
+                        context = context,
+                        noteTitle = note.title,
+                        buyerName = user.name,
+                        orderId = "FREE_${timestamp.toString().takeLast(6)}",
+                        authorName = note.authorName
+                    )
+                    isDownloadingPdf.value = false
+                    if (pdfFile != null && pdfFile.exists() && pdfFile.length() > 0 && pdfFile.canRead()) {
+                        downloadedPdfFile.value = pdfFile
+                        onDownloadSuccess(pdfFile)
+                    } else {
+                        val existStatus = pdfFile?.exists() ?: false
+                        val len = pdfFile?.length() ?: 0L
+                        val readStatus = pdfFile?.canRead() ?: false
+                        Log.e("DOWNLOAD_FORENSIC", "[DOWNLOAD_FORENSIC] FILE_VERIFIED_FAILED: exists=$existStatus, size=$len, readable=$readStatus")
+                        uiMessage.value = "Download failed for ${note.title}."
+                    }
+                }
+            } catch (e: Exception) {
+                Log.e("DOWNLOAD_FORENSIC", "[DOWNLOAD_FORENSIC] Exception during download chain: ${e.message}", e)
+                uiMessage.value = "Download Failed: ${e.localizedMessage ?: e.message}"
+                isDownloadingPdf.value = false
             }
         }
     }
@@ -1475,10 +1503,13 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     .await()
 
                 if (entitlementQuery.isEmpty) {
-                    // Check if owner
+                    // Check if owner or free note
                     val listingDoc = db.collection("listings").document(listingId).get().await()
                     val isOwner = listingDoc.getString("sellerId") == userId
-                    if (!isOwner) {
+                    val isFree = listingDoc.getBoolean("isFree") ?: false
+                    val pricePaise = listingDoc.getLong("pricePaise") ?: 0L
+                    val isFreeListing = isFree || pricePaise == 0L
+                    if (!isOwner && !isFreeListing) {
                         throw IllegalStateException("No active download entitlement found.")
                     }
                 }
@@ -1643,27 +1674,26 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
     fun runRailwayStorageDiagnostics(onResult: (String) -> Unit) {
         viewModelScope.launch {
             val sb = java.lang.StringBuilder()
-            sb.append("--- RAILWAY STORAGE DIAGNOSTICS STARTED ---\n")
+            sb.append("--- RAILWAY STORAGE DIAGNOSTICS STARTED ---\n\n")
             try {
                 val auth = FirebaseAuth.getInstance()
                 val user = auth.currentUser
                 if (user == null) {
-                    sb.append("A. Auth: FAILED (Not Authenticated)\n")
+                    sb.append("A. Auth: FAILED (Not Authenticated)\n\n")
                     onResult(sb.toString())
                     return@launch
                 }
-                sb.append("A. Auth: SUCCESS (UID: ${user.uid})\n")
+                sb.append("A. Auth: SUCCESS\n\n")
 
                 val db = FirebaseManager.firestore
                 if (db == null) {
-                    sb.append("B. Firestore: FAILED (db is null)\n")
+                    sb.append("B. Firestore: FAILED (db is null)\n\n")
                     onResult(sb.toString())
                     return@launch
                 }
-                sb.append("B. Firestore: SUCCESS\n")
+                sb.append("B. Firestore: SUCCESS\n\n")
 
                 val tempListingId = "diag_listing_${System.currentTimeMillis()}"
-                sb.append("C. Creating temp listing: START (ID: $tempListingId)\n")
                 val tempListingMap = mapOf(
                     "id" to tempListingId,
                     "sellerId" to user.uid,
@@ -1685,16 +1715,16 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
 
                 try {
                     db.collection("listings").document(tempListingId).set(tempListingMap).await()
-                    sb.append("   Temp listing creation: SUCCESS\n")
+                    sb.append("C. Creating temp listing: SUCCESS\n\n")
                 } catch (e: Exception) {
-                    sb.append("   Temp listing creation: FAILED (${e.message})\n")
+                    sb.append("C. Creating temp listing: FAILED (${e.message})\n\n")
                     onResult(sb.toString())
                     return@launch
                 }
 
-                sb.append("D. Requesting presigned URL: START\n")
                 val testBytes = "STUDYVERSE_STORAGE_TEST_PAYLOAD".toByteArray(java.nio.charset.StandardCharsets.UTF_8)
                 val testSize = testBytes.size.toLong()
+                val apiHost = try { java.net.URL(com.example.util.NetworkConfig.baseUrl).host } catch (e: Exception) { "studyverse-ai-production.up.railway.app" }
 
                 try {
                     val presignedResponse = railwayStorageRepository.requestPresignedUploadUrl(
@@ -1703,10 +1733,11 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                         contentType = "image/jpeg",
                         fileSizeBytes = testSize
                     )
+                    sb.append("D. Railway API:\n")
+                    sb.append("   Host: $apiHost\n")
                     sb.append("   Presigned URL request: SUCCESS\n")
-                    sb.append("   Object Key: ${presignedResponse.objectKey}\n")
+                    sb.append("   Object Key: ${presignedResponse.objectKey}\n\n")
 
-                    sb.append("E. S3 PUT upload: START\n")
                     val uploadSuccess = railwayStorageRepository.uploadFileDirectlyToS3(
                         uploadUrl = presignedResponse.uploadUrl,
                         inputStream = testBytes.inputStream(),
@@ -1715,39 +1746,39 @@ class MainViewModel(application: Application) : AndroidViewModel(application) {
                     )
 
                     if (uploadSuccess) {
-                        sb.append("   S3 PUT upload: SUCCESS\n")
+                        sb.append("E. S3 PUT upload: SUCCESS\n\n")
                     } else {
-                        sb.append("   S3 PUT upload: FAILED\n")
+                        sb.append("E. S3 PUT upload: FAILED\n\n")
                     }
                 } catch (e: com.example.data.repository.RailwayApiException) {
-                    sb.append("   Railway API Error:\n")
-                    sb.append("      Exception Class: ${e.javaClass.name}\n")
-                    sb.append("      Exception Message: ${e.message}\n")
-                    sb.append("      Cause: ${e.cause?.javaClass?.name}: ${e.cause?.message}\n")
-                    sb.append("      HTTP Status Code: ${e.statusCode}\n")
-                    sb.append("      HTTP Error Body: ${e.responseBody}\n")
-                    sb.append("      API Endpoint Path: ${e.endpointUrl}\n")
+                    sb.append("D. Railway API: FAILED\n")
+                    sb.append("   Host: $apiHost\n")
+                    sb.append("   Exception: ${e.javaClass.name}\n")
+                    sb.append("   Message: ${e.message}\n")
+                    sb.append("   HTTP Status: ${e.statusCode}\n")
+                    sb.append("   Endpoint Path: ${try { java.net.URL(e.endpointUrl).path } catch(ex: Exception) { e.endpointUrl }}\n\n")
                 } catch (e: Exception) {
-                    sb.append("   Error during S3 upload chain:\n")
-                    sb.append("      Exception Class: ${e.javaClass.name}\n")
-                    sb.append("      Exception Message: ${e.message}\n")
-                    sb.append("      Cause: ${e.cause?.javaClass?.name}: ${e.cause?.message}\n")
+                    sb.append("D. Railway API: FAILED\n")
+                    sb.append("   Host: $apiHost\n")
+                    sb.append("   Exception: ${e.javaClass.name}\n")
+                    sb.append("   Message: ${e.message ?: "Network error or timeout"}\n")
+                    sb.append("   Cause: ${e.cause?.javaClass?.name ?: "none"}: ${e.cause?.message ?: ""}\n\n")
                 } finally {
-                    sb.append("F. Cleanup temp listing: START\n")
                     try {
                         db.collection("listings").document(tempListingId).delete().await()
-                        sb.append("   Cleanup temp listing: SUCCESS\n")
+                        sb.append("F. Cleanup temp listing: SUCCESS\n\n")
                     } catch (e: Exception) {
-                        sb.append("   Cleanup temp listing: FAILED (${e.message})\n")
+                        sb.append("F. Cleanup temp listing: FAILED (${e.message})\n\n")
                     }
                 }
             } catch (e: Exception) {
-                sb.append("Diagnostics failure: ${e.message}\n")
+                sb.append("Diagnostics failure: ${e.message}\n\n")
             }
             sb.append("--- RAILWAY STORAGE DIAGNOSTICS END ---")
             onResult(sb.toString())
         }
     }
+
 
     fun testPdfRailwayUpload(
         context: Context,

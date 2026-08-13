@@ -91,7 +91,11 @@ object AndroidDownloadManagerHelper {
         targetFileName: String
     ): File? {
         return try {
-            val pfd = downloadManager.openDownloadedFile(downloadId) ?: return null
+            val pfd = downloadManager.openDownloadedFile(downloadId)
+            if (pfd == null) {
+                logDownloadFailureReason(downloadManager, downloadId)
+                return null
+            }
             val inputStream = java.io.FileInputStream(pfd.fileDescriptor)
             val cacheFolder = File(context.cacheDir, "study_downloads").apply { mkdirs() }
             val cacheFile = File(cacheFolder, targetFileName)
@@ -106,7 +110,27 @@ object AndroidDownloadManagerHelper {
             cacheFile
         } catch (e: Exception) {
             Log.e(TAG, "Failed to copy downloaded file to cache: ${e.message}", e)
+            logDownloadFailureReason(downloadManager, downloadId)
             null
+        }
+    }
+
+    private fun logDownloadFailureReason(downloadManager: DownloadManager, downloadId: Long) {
+        try {
+            val query = DownloadManager.Query().setFilterById(downloadId)
+            val cursor = downloadManager.query(query)
+            if (cursor != null && cursor.moveToFirst()) {
+                val statusIdx = cursor.getColumnIndex(DownloadManager.COLUMN_STATUS)
+                val reasonIdx = cursor.getColumnIndex(DownloadManager.COLUMN_REASON)
+                if (statusIdx >= 0 && reasonIdx >= 0) {
+                    val status = cursor.getInt(statusIdx)
+                    val reason = cursor.getInt(reasonIdx)
+                    Log.e(TAG, "DownloadManager Failure Details: status=$status, reasonCode=$reason")
+                }
+            }
+            cursor?.close()
+        } catch (ex: Exception) {
+            Log.e(TAG, "Failed to query download status: ${ex.message}")
         }
     }
 

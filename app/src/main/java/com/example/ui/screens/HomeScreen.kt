@@ -44,6 +44,7 @@ fun HomeScreen(
     onNoteSelect: (NoteEntity) -> Unit,
     onProductSelect: (ProductEntity) -> Unit
 ) {
+    val context = androidx.compose.ui.platform.LocalContext.current
     val freeNotes by viewModel.freeNotes.collectAsState()
     val digitalStore by viewModel.digitalNotesStore.collectAsState()
     val products by viewModel.allProducts.collectAsState()
@@ -246,7 +247,7 @@ fun HomeScreen(
                         isBookmarked = bookmarkIds.contains(note.id),
                         onNoteClick = { onNoteSelect(note) },
                         onBookmarkToggle = { viewModel.toggleBookmark(note.id, note.title, "NOTE", note.subject, note.price) },
-                        onActionClick = { viewModel.downloadFreeNote(note) }
+                        onActionClick = { viewModel.downloadFreeNote(note, context) }
                     )
                 }
             }
